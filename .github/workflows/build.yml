@@ -121,6 +121,7 @@ jobs:
 
           ./Configure ${TARGET} \
             --prefix=$DEPS_PREFIX \
+            --libdir=lib \
             --cross-compile-prefix=${CROSS_PREFIX} \
             no-shared \
             no-tests \
