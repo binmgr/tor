@@ -51,8 +51,8 @@ jobs:
           - { os: windows, arch: arm64, cross: aarch64-w64-mingw32, target_os: mingw, ext: ".exe" }
           - { os: darwin, arch: amd64, cross: x86_64-apple-darwin23, target_os: darwin, ext: "" }
           - { os: darwin, arch: arm64, cross: aarch64-apple-darwin23, target_os: darwin, ext: "" }
-          - { os: freebsd, arch: amd64, cross: x86_64-unknown-freebsd14, target_os: freebsd, ext: "" }
-          - { os: freebsd, arch: arm64, cross: aarch64-unknown-freebsd14, target_os: freebsd, ext: "" }
+          - { os: freebsd, arch: amd64, cross: x86_64-unknown-freebsd15, target_os: freebsd, ext: "" }
+          - { os: freebsd, arch: arm64, cross: aarch64-unknown-freebsd15, target_os: freebsd, ext: "" }
     steps:
       - name: Setup Environment
         run: |
@@ -67,7 +67,7 @@ jobs:
 
           case "${{ matrix.os }}-${{ matrix.arch }}" in
             linux-amd64)
-              wget -q https://musl.cc/x86_64-linux-musl-cross.tgz
+              wget -v https://musl.cc/x86_64-linux-musl-cross.tgz
               tar xzf x86_64-linux-musl-cross.tgz -C $CROSS_ROOT
               echo "TOOLCHAIN_PATH=$CROSS_ROOT/x86_64-linux-musl-cross/bin" >> $GITHUB_ENV
               echo "CC=x86_64-linux-musl-gcc" >> $GITHUB_ENV
@@ -75,11 +75,11 @@ jobs:
               echo "AR=x86_64-linux-musl-ar" >> $GITHUB_ENV
               echo "RANLIB=x86_64-linux-musl-ranlib" >> $GITHUB_ENV
               echo "STRIP=x86_64-linux-musl-strip" >> $GITHUB_ENV
-              echo "CROSS_PREFIX=x86_64-linux-musl-" >> $GITHUB_ENV
+              echo "CROSS_PREFIX=" >> $GITHUB_ENV
               echo "HOST=x86_64-linux-musl" >> $GITHUB_ENV
               ;;
             linux-arm64)
-              wget -q https://musl.cc/aarch64-linux-musl-cross.tgz
+              wget -v https://musl.cc/aarch64-linux-musl-cross.tgz
               tar xzf aarch64-linux-musl-cross.tgz -C $CROSS_ROOT
               echo "TOOLCHAIN_PATH=$CROSS_ROOT/aarch64-linux-musl-cross/bin" >> $GITHUB_ENV
               echo "CC=aarch64-linux-musl-gcc" >> $GITHUB_ENV
@@ -87,7 +87,7 @@ jobs:
               echo "AR=aarch64-linux-musl-ar" >> $GITHUB_ENV
               echo "RANLIB=aarch64-linux-musl-ranlib" >> $GITHUB_ENV
               echo "STRIP=aarch64-linux-musl-strip" >> $GITHUB_ENV
-              echo "CROSS_PREFIX=aarch64-linux-musl-" >> $GITHUB_ENV
+              echo "CROSS_PREFIX=" >> $GITHUB_ENV
               echo "HOST=aarch64-linux-musl" >> $GITHUB_ENV
               ;;
             windows-amd64)
@@ -98,7 +98,7 @@ jobs:
               echo "AR=x86_64-w64-mingw32-ar" >> $GITHUB_ENV
               echo "RANLIB=x86_64-w64-mingw32-ranlib" >> $GITHUB_ENV
               echo "STRIP=x86_64-w64-mingw32-strip" >> $GITHUB_ENV
-              echo "CROSS_PREFIX=x86_64-w64-mingw32-" >> $GITHUB_ENV
+              echo "CROSS_PREFIX=" >> $GITHUB_ENV
               echo "HOST=x86_64-w64-mingw32" >> $GITHUB_ENV
               ;;
             windows-arm64)
@@ -110,7 +110,7 @@ jobs:
               echo "AR=aarch64-w64-mingw32-ar" >> $GITHUB_ENV
               echo "RANLIB=aarch64-w64-mingw32-ranlib" >> $GITHUB_ENV
               echo "STRIP=aarch64-w64-mingw32-strip" >> $GITHUB_ENV
-              echo "CROSS_PREFIX=aarch64-w64-mingw32-" >> $GITHUB_ENV
+              echo "CROSS_PREFIX=" >> $GITHUB_ENV
               echo "HOST=aarch64-w64-mingw32" >> $GITHUB_ENV
               ;;
             darwin-amd64|darwin-arm64)
@@ -126,7 +126,7 @@ jobs:
                 echo "AR=x86_64-apple-darwin23-ar" >> $GITHUB_ENV
                 echo "RANLIB=x86_64-apple-darwin23-ranlib" >> $GITHUB_ENV
                 echo "STRIP=x86_64-apple-darwin23-strip" >> $GITHUB_ENV
-                echo "CROSS_PREFIX=x86_64-apple-darwin23-" >> $GITHUB_ENV
+                echo "CROSS_PREFIX=" >> $GITHUB_ENV
                 echo "HOST=x86_64-apple-darwin23" >> $GITHUB_ENV
               else
                 echo "CC=aarch64-apple-darwin23-clang" >> $GITHUB_ENV
@@ -134,13 +134,13 @@ jobs:
                 echo "AR=aarch64-apple-darwin23-ar" >> $GITHUB_ENV
                 echo "RANLIB=aarch64-apple-darwin23-ranlib" >> $GITHUB_ENV
                 echo "STRIP=aarch64-apple-darwin23-strip" >> $GITHUB_ENV
-                echo "CROSS_PREFIX=aarch64-apple-darwin23-" >> $GITHUB_ENV
+                echo "CROSS_PREFIX=" >> $GITHUB_ENV
                 echo "HOST=aarch64-apple-darwin23" >> $GITHUB_ENV
               fi
               ;;
             freebsd-amd64)
               sudo apt-get install -y clang lld
-              wget -q https://download.freebsd.org/releases/amd64/14.0-RELEASE/base.txz
+              wget -q https://download.freebsd.org/releases/amd64/15.0-RELEASE/base.txz
               sudo mkdir -p /opt/freebsd
               sudo tar xJf base.txz -C /opt/freebsd ./lib ./usr/lib ./usr/include
               echo "TOOLCHAIN_PATH=" >> $GITHUB_ENV
@@ -150,14 +150,14 @@ jobs:
               echo "RANLIB=llvm-ranlib" >> $GITHUB_ENV
               echo "STRIP=llvm-strip" >> $GITHUB_ENV
               echo "CROSS_PREFIX=" >> $GITHUB_ENV
-              echo "HOST=x86_64-unknown-freebsd14" >> $GITHUB_ENV
+              echo "HOST=x86_64-unknown-freebsd15" >> $GITHUB_ENV
               echo "FREEBSD_SYSROOT=/opt/freebsd" >> $GITHUB_ENV
-              echo "CFLAGS=--sysroot=/opt/freebsd --target=x86_64-unknown-freebsd14" >> $GITHUB_ENV
-              echo "LDFLAGS=--sysroot=/opt/freebsd --target=x86_64-unknown-freebsd14 -fuse-ld=lld" >> $GITHUB_ENV
+              echo "CFLAGS=--sysroot=/opt/freebsd --target=x86_64-unknown-freebsd15" >> $GITHUB_ENV
+              echo "LDFLAGS=--sysroot=/opt/freebsd --target=x86_64-unknown-freebsd15 -fuse-ld=lld" >> $GITHUB_ENV
               ;;
             freebsd-arm64)
               sudo apt-get install -y clang lld
-              wget -q https://download.freebsd.org/releases/arm64/aarch64/14.0-RELEASE/base.txz
+              wget -q https://download.freebsd.org/releases/arm64/aarch64/15.0-RELEASE/base.txz
               sudo mkdir -p /opt/freebsd
               sudo tar xJf base.txz -C /opt/freebsd ./lib ./usr/lib ./usr/include
               echo "TOOLCHAIN_PATH=" >> $GITHUB_ENV
@@ -167,10 +167,10 @@ jobs:
               echo "RANLIB=llvm-ranlib" >> $GITHUB_ENV
               echo "STRIP=llvm-strip" >> $GITHUB_ENV
               echo "CROSS_PREFIX=" >> $GITHUB_ENV
-              echo "HOST=aarch64-unknown-freebsd14" >> $GITHUB_ENV
+              echo "HOST=aarch64-unknown-freebsd15" >> $GITHUB_ENV
               echo "FREEBSD_SYSROOT=/opt/freebsd" >> $GITHUB_ENV
-              echo "CFLAGS=--sysroot=/opt/freebsd --target=aarch64-unknown-freebsd14" >> $GITHUB_ENV
-              echo "LDFLAGS=--sysroot=/opt/freebsd --target=aarch64-unknown-freebsd14 -fuse-ld=lld" >> $GITHUB_ENV
+              echo "CFLAGS=--sysroot=/opt/freebsd --target=aarch64-unknown-freebsd15" >> $GITHUB_ENV
+              echo "LDFLAGS=--sysroot=/opt/freebsd --target=aarch64-unknown-freebsd15 -fuse-ld=lld" >> $GITHUB_ENV
               ;;
           esac
 
