@@ -293,6 +293,23 @@ jobs:
     permissions:
       contents: write
     steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Create Source Archive
+        run: |
+          # Create source archive without VCS files
+          tar --exclude-vcs \
+              --exclude-vcs-ignores \
+              --exclude='.git*' \
+              --exclude='.github' \
+              --transform 's,^\.,tor-builder-${{ needs.get-version.outputs.version }},' \
+              -czf tor-builder-source.tar.gz .
+
+          # Verify archive contents
+          echo "Source archive contents:"
+          tar -tzf tor-builder-source.tar.gz | head -20
+
       - name: Download Artifacts
         uses: actions/download-artifact@v4
         with:
@@ -303,6 +320,7 @@ jobs:
         run: |
           mkdir -p release
           mv artifacts/* release/ 2>/dev/null || mv artifacts/*/* release/
+          mv tor-builder-source.tar.gz release/
           cd release
           chmod +x tor-linux-* tor-darwin-* tor-freebsd-* 2>/dev/null || true
           sha256sum tor-* > checksums.txt
@@ -331,18 +349,23 @@ jobs:
             --title "Tor ${{ needs.get-version.outputs.version }}" \
             --notes "## Tor ${{ needs.get-version.outputs.version }} Static Builds
 
-          Fully static, multi-platform Tor binaries.
+          Fully static Linux binaries built on Debian/Ubuntu with glibc.
+
+          ### Binaries
 
           | Platform | AMD64 | ARM64 |
           |----------|-------|-------|
           | Linux | \`tor-linux-amd64\` | \`tor-linux-arm64\` |
-          | Windows | \`tor-windows-amd64.exe\` | \`tor-windows-arm64.exe\` |
-          | macOS | \`tor-darwin-amd64\` | \`tor-darwin-arm64\` |
-          | FreeBSD | \`tor-freebsd-amd64\` | \`tor-freebsd-arm64\` |
 
-          **Build**: Static | Stripped | BSD-3-Clause
+          ### Source
 
+          - \`tor-builder-source.tar.gz\` - Build scripts and workflow (no VCS files)
+
+          ### Build Info
+
+          **Type**: Static | Stripped | BSD-3-Clause
+          **Libc**: glibc (Debian/Ubuntu standard)
           **Dependencies**: OpenSSL ${OPENSSL_VERSION}, libevent ${LIBEVENT_VERSION}, zlib ${ZLIB_VERSION}, zstd ${ZSTD_VERSION}, xz ${XZ_VERSION}
 
-          Verify: \`sha256sum -c checksums.txt\`" \
+          **Verify**: \`sha256sum -c checksums.txt\`" \
             release/*
