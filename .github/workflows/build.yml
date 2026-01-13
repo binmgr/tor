@@ -82,15 +82,32 @@ jobs:
           tar xzf zlib-${ZLIB_VERSION}.tar.gz
           cd zlib-${ZLIB_VERSION}
 
-          # Use CMake for better cross-compilation support
-          cmake -DCMAKE_INSTALL_PREFIX=$DEPS_PREFIX \
-                -DCMAKE_C_COMPILER=${CC} \
-                -DCMAKE_AR=${AR} \
-                -DCMAKE_RANLIB=${RANLIB} \
-                -DBUILD_SHARED_LIBS=OFF \
-                .
-          make -j$(nproc)
-          make install
+          # Build zlib manually with explicit compiler flags
+          make -f Makefile.in -j$(nproc) \
+            CC="${CC}" \
+            AR="${AR} rc" \
+            RANLIB="${RANLIB}" \
+            CFLAGS="-O3 -fPIC" \
+            libz.a
+
+          # Install manually
+          mkdir -p $DEPS_PREFIX/include $DEPS_PREFIX/lib $DEPS_PREFIX/lib/pkgconfig
+          cp zlib.h zconf.h $DEPS_PREFIX/include/
+          cp libz.a $DEPS_PREFIX/lib/
+
+          # Create pkg-config file
+          cat > $DEPS_PREFIX/lib/pkgconfig/zlib.pc << EOF
+prefix=$DEPS_PREFIX
+exec_prefix=\${prefix}
+libdir=\${exec_prefix}/lib
+includedir=\${prefix}/include
+
+Name: zlib
+Description: zlib compression library
+Version: ${ZLIB_VERSION}
+Libs: -L\${libdir} -lz
+Cflags: -I\${includedir}
+EOF
 
       - name: Build OpenSSL
         run: |
