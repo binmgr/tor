@@ -41,12 +41,13 @@ jobs:
   build:
     needs: get-version
     runs-on: ubuntu-latest
+    # Builds standard Debian/Ubuntu binaries with glibc (not musl)
     strategy:
       fail-fast: false
       matrix:
         include:
-          - { os: linux, arch: amd64, cross: x86_64-linux-gnu, target_os: linux, ext: "" }
-          - { os: linux, arch: arm64, cross: aarch64-linux-gnu, target_os: linux, ext: "" }
+          - { os: linux, arch: amd64, target_os: linux, ext: "" }
+          - { os: linux, arch: arm64, target_os: linux, ext: "" }
     steps:
       - name: Setup Environment
         run: |
@@ -266,7 +267,7 @@ jobs:
             "org.opencontainers.image.revision": "${{ github.sha }}",
             "org.opencontainers.image.vendor": "${{ github.repository_owner }}",
             "org.opencontainers.image.licenses": "BSD-3-Clause",
-            "build.target": "${{ matrix.cross }}",
+            "build.platform": "${{ matrix.os }}-${{ matrix.arch }}",
             "build.static": "true",
             "build.stripped": "true",
             "dependencies.openssl": "${OPENSSL_VERSION}",
