@@ -81,7 +81,14 @@ jobs:
           wget -q https://zlib.net/zlib-${ZLIB_VERSION}.tar.gz
           tar xzf zlib-${ZLIB_VERSION}.tar.gz
           cd zlib-${ZLIB_VERSION}
-          CC=${CC} AR=${AR} RANLIB=${RANLIB} CHOST=${HOST} ./configure --prefix=$DEPS_PREFIX --static
+
+          # Use CMake for better cross-compilation support
+          cmake -DCMAKE_INSTALL_PREFIX=$DEPS_PREFIX \
+                -DCMAKE_C_COMPILER=${CC} \
+                -DCMAKE_AR=${AR} \
+                -DCMAKE_RANLIB=${RANLIB} \
+                -DBUILD_SHARED_LIBS=OFF \
+                .
           make -j$(nproc)
           make install
 
