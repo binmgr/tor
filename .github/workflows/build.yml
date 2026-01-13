@@ -71,15 +71,16 @@ jobs:
       - name: Setup Cross Compilation
         run: |
           if [ "${{ matrix.arch }}" = "arm64" ]; then
-            # Install ARM64 cross-compilation tools
-            apk add --no-cache \
-              gcc-aarch64-none-elf \
-              binutils-aarch64-none-elf || \
-            apk add --no-cache \
-              aarch64-linux-musl-cross || \
-            wget -q https://musl.cc/aarch64-linux-musl-cross.tgz && \
-            tar xzf aarch64-linux-musl-cross.tgz -C /usr/local && \
-            ln -s /usr/local/aarch64-linux-musl-cross/bin/* /usr/local/bin/
+            # Download and install musl cross-compiler for ARM64
+            cd /tmp
+            wget https://musl.cc/aarch64-linux-musl-cross.tgz
+            tar xzf aarch64-linux-musl-cross.tgz
+            mv aarch64-linux-musl-cross /opt/
+            export PATH="/opt/aarch64-linux-musl-cross/bin:$PATH"
+            echo "/opt/aarch64-linux-musl-cross/bin" >> $GITHUB_PATH
+
+            # Verify installation
+            aarch64-linux-musl-gcc --version
           fi
 
       - name: Setup Build Environment
