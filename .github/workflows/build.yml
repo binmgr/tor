@@ -96,18 +96,22 @@ jobs:
           cp libz.a $DEPS_PREFIX/lib/
 
           # Create pkg-config file
-          cat > $DEPS_PREFIX/lib/pkgconfig/zlib.pc << EOF
+          cat > $DEPS_PREFIX/lib/pkgconfig/zlib.pc << 'ZLIBEOF'
 prefix=$DEPS_PREFIX
-exec_prefix=\${prefix}
-libdir=\${exec_prefix}/lib
-includedir=\${prefix}/include
+exec_prefix=${prefix}
+libdir=${exec_prefix}/lib
+includedir=${prefix}/include
 
 Name: zlib
 Description: zlib compression library
-Version: ${ZLIB_VERSION}
-Libs: -L\${libdir} -lz
-Cflags: -I\${includedir}
-EOF
+Version: $ZLIB_VERSION
+Libs: -L${libdir} -lz
+Cflags: -I${includedir}
+ZLIBEOF
+
+          # Substitute actual values
+          sed -i "s|\$DEPS_PREFIX|$DEPS_PREFIX|g" $DEPS_PREFIX/lib/pkgconfig/zlib.pc
+          sed -i "s|\$ZLIB_VERSION|${ZLIB_VERSION}|g" $DEPS_PREFIX/lib/pkgconfig/zlib.pc
 
       - name: Build OpenSSL
         run: |
