@@ -42,8 +42,8 @@ jobs:
     needs: get-version
     runs-on: ubuntu-latest
     container:
-      image: alpine:latest
-    # Builds truly static binaries with musl (Alpine Linux)
+      image: ghcr.io/binmgr/toolchain:latest
+    # Builds truly static binaries with musl using binmgr/toolchain
     # AMD64: native build, ARM64: cross-compiled from AMD64
     strategy:
       fail-fast: false
@@ -52,37 +52,6 @@ jobs:
           - { os: linux, arch: amd64, target_os: linux, ext: "" }
           - { os: linux, arch: arm64, target_os: linux, ext: "" }
     steps:
-      - name: Setup Environment
-        run: |
-          # Install build dependencies in Alpine
-          apk add --no-cache \
-            build-base \
-            cmake \
-            pkgconfig \
-            git \
-            curl \
-            wget \
-            autoconf \
-            automake \
-            libtool \
-            linux-headers \
-            perl
-
-      - name: Setup Cross Compilation
-        run: |
-          if [ "${{ matrix.arch }}" = "arm64" ]; then
-            # Download and install musl cross-compiler for ARM64
-            cd /tmp
-            wget https://musl.cc/aarch64-linux-musl-cross.tgz
-            tar xzf aarch64-linux-musl-cross.tgz
-            mv aarch64-linux-musl-cross /opt/
-            export PATH="/opt/aarch64-linux-musl-cross/bin:$PATH"
-            echo "/opt/aarch64-linux-musl-cross/bin" >> $GITHUB_PATH
-
-            # Verify installation
-            aarch64-linux-musl-gcc --version
-          fi
-
       - name: Setup Build Environment
         run: |
           mkdir -p $HOME/deps
@@ -98,12 +67,12 @@ jobs:
             echo "STRIP=strip" >> $GITHUB_ENV
             echo "HOST=x86_64-alpine-linux-musl" >> $GITHUB_ENV
           else
-            # ARM64 cross-compile
-            echo "CC=aarch64-linux-musl-gcc" >> $GITHUB_ENV
-            echo "CXX=aarch64-linux-musl-g++" >> $GITHUB_ENV
-            echo "AR=aarch64-linux-musl-ar" >> $GITHUB_ENV
-            echo "RANLIB=aarch64-linux-musl-ranlib" >> $GITHUB_ENV
-            echo "STRIP=aarch64-linux-musl-strip" >> $GITHUB_ENV
+            # ARM64 cross-compile (using Bootlin musl toolchain)
+            echo "CC=aarch64-linux-gcc" >> $GITHUB_ENV
+            echo "CXX=aarch64-linux-g++" >> $GITHUB_ENV
+            echo "AR=aarch64-linux-ar" >> $GITHUB_ENV
+            echo "RANLIB=aarch64-buildroot-linux-musl-ranlib" >> $GITHUB_ENV
+            echo "STRIP=aarch64-linux-strip" >> $GITHUB_ENV
             echo "HOST=aarch64-linux-musl" >> $GITHUB_ENV
           fi
 
@@ -341,7 +310,7 @@ jobs:
             --title "Tor ${{ needs.get-version.outputs.version }}" \
             --notes "## Tor ${{ needs.get-version.outputs.version }} Static Builds
 
-          **Truly static** Linux binaries built with **musl libc** on Alpine Linux.
+          **Truly static** Linux binaries built with **musl libc** using \`ghcr.io/binmgr/toolchain\`.
           Zero external dependencies - works on any Linux distribution, any version.
 
           ### Binaries
@@ -358,6 +327,7 @@ jobs:
 
           **Type**: Fully Static | Stripped | BSD-3-Clause
           **Libc**: musl (Alpine Linux) - universal compatibility
+          **Toolchain**: ghcr.io/binmgr/toolchain:latest
           **Dependencies**: OpenSSL ${OPENSSL_VERSION}, libevent ${LIBEVENT_VERSION}, zlib ${ZLIB_VERSION}, zstd ${ZSTD_VERSION}, xz ${XZ_VERSION}
 
           ### Verification
