@@ -42,15 +42,15 @@ jobs:
     needs: get-version
     runs-on: ubuntu-latest
     container:
-      image: ${{ matrix.container }}
-      options: --platform=${{ matrix.platform }}
+      image: alpine:latest
     # Builds truly static binaries with musl (Alpine Linux)
+    # AMD64: native build, ARM64: cross-compiled from AMD64
     strategy:
       fail-fast: false
       matrix:
         include:
-          - { os: linux, arch: amd64, container: alpine:latest, platform: linux/amd64, target_os: linux, ext: "" }
-          - { os: linux, arch: arm64, container: alpine:latest, platform: linux/arm64, target_os: linux, ext: "" }
+          - { os: linux, arch: amd64, target_os: linux, ext: "" }
+          - { os: linux, arch: arm64, target_os: linux, ext: "" }
     steps:
       - name: Setup Environment
         run: |
@@ -68,17 +68,43 @@ jobs:
             linux-headers \
             perl
 
+      - name: Setup Cross Compilation
+        run: |
+          if [ "${{ matrix.arch }}" = "arm64" ]; then
+            # Install ARM64 cross-compilation tools
+            apk add --no-cache \
+              gcc-aarch64-none-elf \
+              binutils-aarch64-none-elf || \
+            apk add --no-cache \
+              aarch64-linux-musl-cross || \
+            wget -q https://musl.cc/aarch64-linux-musl-cross.tgz && \
+            tar xzf aarch64-linux-musl-cross.tgz -C /usr/local && \
+            ln -s /usr/local/aarch64-linux-musl-cross/bin/* /usr/local/bin/
+          fi
+
       - name: Setup Build Environment
         run: |
           mkdir -p $HOME/deps
           echo "DEPS_PREFIX=$HOME/deps" >> $GITHUB_ENV
           echo "PKG_CONFIG_PATH=$HOME/deps/lib/pkgconfig" >> $GITHUB_ENV
-          echo "CC=gcc" >> $GITHUB_ENV
-          echo "CXX=g++" >> $GITHUB_ENV
-          echo "AR=ar" >> $GITHUB_ENV
-          echo "RANLIB=ranlib" >> $GITHUB_ENV
-          echo "STRIP=strip" >> $GITHUB_ENV
-          echo "HOST=$(uname -m)-alpine-linux-musl" >> $GITHUB_ENV
+
+          if [ "${{ matrix.arch }}" = "amd64" ]; then
+            # Native AMD64 build
+            echo "CC=gcc" >> $GITHUB_ENV
+            echo "CXX=g++" >> $GITHUB_ENV
+            echo "AR=ar" >> $GITHUB_ENV
+            echo "RANLIB=ranlib" >> $GITHUB_ENV
+            echo "STRIP=strip" >> $GITHUB_ENV
+            echo "HOST=x86_64-alpine-linux-musl" >> $GITHUB_ENV
+          else
+            # ARM64 cross-compile
+            echo "CC=aarch64-linux-musl-gcc" >> $GITHUB_ENV
+            echo "CXX=aarch64-linux-musl-g++" >> $GITHUB_ENV
+            echo "AR=aarch64-linux-musl-ar" >> $GITHUB_ENV
+            echo "RANLIB=aarch64-linux-musl-ranlib" >> $GITHUB_ENV
+            echo "STRIP=aarch64-linux-musl-strip" >> $GITHUB_ENV
+            echo "HOST=aarch64-linux-musl" >> $GITHUB_ENV
+          fi
 
       - name: Build zlib
         run: |
