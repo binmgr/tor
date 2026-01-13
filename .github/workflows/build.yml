@@ -47,12 +47,6 @@ jobs:
         include:
           - { os: linux, arch: amd64, cross: x86_64-linux-musl, target_os: linux, ext: "" }
           - { os: linux, arch: arm64, cross: aarch64-linux-musl, target_os: linux, ext: "" }
-          - { os: windows, arch: amd64, cross: x86_64-w64-mingw32, target_os: mingw, ext: ".exe" }
-          - { os: windows, arch: arm64, cross: aarch64-w64-mingw32, target_os: mingw, ext: ".exe" }
-          - { os: darwin, arch: amd64, cross: x86_64-apple-darwin23, target_os: darwin, ext: "" }
-          - { os: darwin, arch: arm64, cross: aarch64-apple-darwin23, target_os: darwin, ext: "" }
-          - { os: freebsd, arch: amd64, cross: x86_64-unknown-freebsd15, target_os: freebsd, ext: "" }
-          - { os: freebsd, arch: arm64, cross: aarch64-unknown-freebsd15, target_os: freebsd, ext: "" }
     steps:
       - name: Setup Environment
         run: |
@@ -62,129 +56,38 @@ jobs:
       - name: Install Cross Compiler
         id: compiler
         run: |
-          mkdir -p $HOME/cross
-          export CROSS_ROOT="$HOME/cross"
-
           case "${{ matrix.os }}-${{ matrix.arch }}" in
             linux-amd64)
-              wget -v https://musl.cc/x86_64-linux-musl-cross.tgz
-              tar xzf x86_64-linux-musl-cross.tgz -C $CROSS_ROOT
-              echo "TOOLCHAIN_PATH=$CROSS_ROOT/x86_64-linux-musl-cross/bin" >> $GITHUB_ENV
-              echo "CC=x86_64-linux-musl-gcc" >> $GITHUB_ENV
-              echo "CXX=x86_64-linux-musl-g++" >> $GITHUB_ENV
-              echo "AR=x86_64-linux-musl-ar" >> $GITHUB_ENV
-              echo "RANLIB=x86_64-linux-musl-ranlib" >> $GITHUB_ENV
-              echo "STRIP=x86_64-linux-musl-strip" >> $GITHUB_ENV
+              # Use native compiler for AMD64
+              echo "CC=gcc" >> $GITHUB_ENV
+              echo "CXX=g++" >> $GITHUB_ENV
+              echo "AR=ar" >> $GITHUB_ENV
+              echo "RANLIB=ranlib" >> $GITHUB_ENV
+              echo "STRIP=strip" >> $GITHUB_ENV
               echo "CROSS_PREFIX=" >> $GITHUB_ENV
-              echo "HOST=x86_64-linux-musl" >> $GITHUB_ENV
+              echo "HOST=x86_64-linux-gnu" >> $GITHUB_ENV
               ;;
             linux-arm64)
-              wget -v https://musl.cc/aarch64-linux-musl-cross.tgz
-              tar xzf aarch64-linux-musl-cross.tgz -C $CROSS_ROOT
-              echo "TOOLCHAIN_PATH=$CROSS_ROOT/aarch64-linux-musl-cross/bin" >> $GITHUB_ENV
-              echo "CC=aarch64-linux-musl-gcc" >> $GITHUB_ENV
-              echo "CXX=aarch64-linux-musl-g++" >> $GITHUB_ENV
-              echo "AR=aarch64-linux-musl-ar" >> $GITHUB_ENV
-              echo "RANLIB=aarch64-linux-musl-ranlib" >> $GITHUB_ENV
-              echo "STRIP=aarch64-linux-musl-strip" >> $GITHUB_ENV
+              # Install cross-compiler for ARM64
+              sudo apt-get install -y gcc-aarch64-linux-gnu g++-aarch64-linux-gnu
+              echo "CC=aarch64-linux-gnu-gcc" >> $GITHUB_ENV
+              echo "CXX=aarch64-linux-gnu-g++" >> $GITHUB_ENV
+              echo "AR=aarch64-linux-gnu-ar" >> $GITHUB_ENV
+              echo "RANLIB=aarch64-linux-gnu-ranlib" >> $GITHUB_ENV
+              echo "STRIP=aarch64-linux-gnu-strip" >> $GITHUB_ENV
               echo "CROSS_PREFIX=" >> $GITHUB_ENV
-              echo "HOST=aarch64-linux-musl" >> $GITHUB_ENV
-              ;;
-            windows-amd64)
-              sudo apt-get install -y mingw-w64
-              echo "TOOLCHAIN_PATH=" >> $GITHUB_ENV
-              echo "CC=x86_64-w64-mingw32-gcc" >> $GITHUB_ENV
-              echo "CXX=x86_64-w64-mingw32-g++" >> $GITHUB_ENV
-              echo "AR=x86_64-w64-mingw32-ar" >> $GITHUB_ENV
-              echo "RANLIB=x86_64-w64-mingw32-ranlib" >> $GITHUB_ENV
-              echo "STRIP=x86_64-w64-mingw32-strip" >> $GITHUB_ENV
-              echo "CROSS_PREFIX=" >> $GITHUB_ENV
-              echo "HOST=x86_64-w64-mingw32" >> $GITHUB_ENV
-              ;;
-            windows-arm64)
-              wget -q https://github.com/mstorsjo/llvm-mingw/releases/download/20241217/llvm-mingw-20241217-ucrt-ubuntu-20.04-x86_64.tar.xz
-              tar xJf llvm-mingw-*.tar.xz -C $CROSS_ROOT
-              echo "TOOLCHAIN_PATH=$CROSS_ROOT/llvm-mingw-20241217-ucrt-ubuntu-20.04-x86_64/bin" >> $GITHUB_ENV
-              echo "CC=aarch64-w64-mingw32-gcc" >> $GITHUB_ENV
-              echo "CXX=aarch64-w64-mingw32-g++" >> $GITHUB_ENV
-              echo "AR=aarch64-w64-mingw32-ar" >> $GITHUB_ENV
-              echo "RANLIB=aarch64-w64-mingw32-ranlib" >> $GITHUB_ENV
-              echo "STRIP=aarch64-w64-mingw32-strip" >> $GITHUB_ENV
-              echo "CROSS_PREFIX=" >> $GITHUB_ENV
-              echo "HOST=aarch64-w64-mingw32" >> $GITHUB_ENV
-              ;;
-            darwin-amd64|darwin-arm64)
-              sudo apt-get install -y clang libxml2-dev llvm-dev uuid-dev libssl-dev
-              git clone --depth 1 https://github.com/tpoechtrager/osxcross.git $CROSS_ROOT/osxcross
-              cd $CROSS_ROOT/osxcross
-              wget -q https://github.com/joseluisq/macosx-sdks/releases/download/14.0/MacOSX14.0.sdk.tar.xz -O tarballs/MacOSX14.0.sdk.tar.xz
-              UNATTENDED=1 ./build.sh || true
-              echo "TOOLCHAIN_PATH=$CROSS_ROOT/osxcross/target/bin" >> $GITHUB_ENV
-              if [ "${{ matrix.arch }}" = "amd64" ]; then
-                echo "CC=x86_64-apple-darwin23-clang" >> $GITHUB_ENV
-                echo "CXX=x86_64-apple-darwin23-clang++" >> $GITHUB_ENV
-                echo "AR=x86_64-apple-darwin23-ar" >> $GITHUB_ENV
-                echo "RANLIB=x86_64-apple-darwin23-ranlib" >> $GITHUB_ENV
-                echo "STRIP=x86_64-apple-darwin23-strip" >> $GITHUB_ENV
-                echo "CROSS_PREFIX=" >> $GITHUB_ENV
-                echo "HOST=x86_64-apple-darwin23" >> $GITHUB_ENV
-              else
-                echo "CC=aarch64-apple-darwin23-clang" >> $GITHUB_ENV
-                echo "CXX=aarch64-apple-darwin23-clang++" >> $GITHUB_ENV
-                echo "AR=aarch64-apple-darwin23-ar" >> $GITHUB_ENV
-                echo "RANLIB=aarch64-apple-darwin23-ranlib" >> $GITHUB_ENV
-                echo "STRIP=aarch64-apple-darwin23-strip" >> $GITHUB_ENV
-                echo "CROSS_PREFIX=" >> $GITHUB_ENV
-                echo "HOST=aarch64-apple-darwin23" >> $GITHUB_ENV
-              fi
-              ;;
-            freebsd-amd64)
-              sudo apt-get install -y clang lld
-              wget -q https://download.freebsd.org/releases/amd64/15.0-RELEASE/base.txz
-              sudo mkdir -p /opt/freebsd
-              sudo tar xJf base.txz -C /opt/freebsd ./lib ./usr/lib ./usr/include
-              echo "TOOLCHAIN_PATH=" >> $GITHUB_ENV
-              echo "CC=clang" >> $GITHUB_ENV
-              echo "CXX=clang++" >> $GITHUB_ENV
-              echo "AR=llvm-ar" >> $GITHUB_ENV
-              echo "RANLIB=llvm-ranlib" >> $GITHUB_ENV
-              echo "STRIP=llvm-strip" >> $GITHUB_ENV
-              echo "CROSS_PREFIX=" >> $GITHUB_ENV
-              echo "HOST=x86_64-unknown-freebsd15" >> $GITHUB_ENV
-              echo "FREEBSD_SYSROOT=/opt/freebsd" >> $GITHUB_ENV
-              echo "CFLAGS=--sysroot=/opt/freebsd --target=x86_64-unknown-freebsd15" >> $GITHUB_ENV
-              echo "LDFLAGS=--sysroot=/opt/freebsd --target=x86_64-unknown-freebsd15 -fuse-ld=lld" >> $GITHUB_ENV
-              ;;
-            freebsd-arm64)
-              sudo apt-get install -y clang lld
-              wget -q https://download.freebsd.org/releases/arm64/aarch64/15.0-RELEASE/base.txz
-              sudo mkdir -p /opt/freebsd
-              sudo tar xJf base.txz -C /opt/freebsd ./lib ./usr/lib ./usr/include
-              echo "TOOLCHAIN_PATH=" >> $GITHUB_ENV
-              echo "CC=clang" >> $GITHUB_ENV
-              echo "CXX=clang++" >> $GITHUB_ENV
-              echo "AR=llvm-ar" >> $GITHUB_ENV
-              echo "RANLIB=llvm-ranlib" >> $GITHUB_ENV
-              echo "STRIP=llvm-strip" >> $GITHUB_ENV
-              echo "CROSS_PREFIX=" >> $GITHUB_ENV
-              echo "HOST=aarch64-unknown-freebsd15" >> $GITHUB_ENV
-              echo "FREEBSD_SYSROOT=/opt/freebsd" >> $GITHUB_ENV
-              echo "CFLAGS=--sysroot=/opt/freebsd --target=aarch64-unknown-freebsd15" >> $GITHUB_ENV
-              echo "LDFLAGS=--sysroot=/opt/freebsd --target=aarch64-unknown-freebsd15 -fuse-ld=lld" >> $GITHUB_ENV
+              echo "HOST=aarch64-linux-gnu" >> $GITHUB_ENV
               ;;
           esac
 
       - name: Setup Build Environment
         run: |
-          [ -n "$TOOLCHAIN_PATH" ] && export PATH="$TOOLCHAIN_PATH:$PATH"
           mkdir -p $HOME/deps
           echo "DEPS_PREFIX=$HOME/deps" >> $GITHUB_ENV
           echo "PKG_CONFIG_PATH=$HOME/deps/lib/pkgconfig" >> $GITHUB_ENV
-          echo "PATH=$TOOLCHAIN_PATH:$PATH" >> $GITHUB_ENV
 
       - name: Build zlib
         run: |
-          [ -n "$TOOLCHAIN_PATH" ] && export PATH="$TOOLCHAIN_PATH:$PATH"
           wget -q https://zlib.net/zlib-${ZLIB_VERSION}.tar.gz
           tar xzf zlib-${ZLIB_VERSION}.tar.gz
           cd zlib-${ZLIB_VERSION}
@@ -201,7 +104,6 @@ jobs:
 
       - name: Build OpenSSL
         run: |
-          [ -n "$TOOLCHAIN_PATH" ] && export PATH="$TOOLCHAIN_PATH:$PATH"
           wget -q https://www.openssl.org/source/openssl-${OPENSSL_VERSION}.tar.gz
           tar xzf openssl-${OPENSSL_VERSION}.tar.gz
           cd openssl-${OPENSSL_VERSION}
@@ -231,7 +133,6 @@ jobs:
 
       - name: Build libevent
         run: |
-          [ -n "$TOOLCHAIN_PATH" ] && export PATH="$TOOLCHAIN_PATH:$PATH"
           wget -q https://github.com/libevent/libevent/releases/download/release-${LIBEVENT_VERSION}/libevent-${LIBEVENT_VERSION}.tar.gz
           tar xzf libevent-${LIBEVENT_VERSION}.tar.gz
           cd libevent-${LIBEVENT_VERSION}
@@ -253,7 +154,6 @@ jobs:
 
       - name: Build zstd
         run: |
-          [ -n "$TOOLCHAIN_PATH" ] && export PATH="$TOOLCHAIN_PATH:$PATH"
           wget -q https://github.com/facebook/zstd/releases/download/v${ZSTD_VERSION}/zstd-${ZSTD_VERSION}.tar.gz
           tar xzf zstd-${ZSTD_VERSION}.tar.gz
           cd zstd-${ZSTD_VERSION}
@@ -269,7 +169,6 @@ jobs:
 
       - name: Build xz/liblzma
         run: |
-          [ -n "$TOOLCHAIN_PATH" ] && export PATH="$TOOLCHAIN_PATH:$PATH"
           wget -q https://github.com/tukaani-project/xz/releases/download/v${XZ_VERSION}/xz-${XZ_VERSION}.tar.gz
           tar xzf xz-${XZ_VERSION}.tar.gz
           cd xz-${XZ_VERSION}
@@ -300,7 +199,6 @@ jobs:
 
       - name: Build Tor
         run: |
-          [ -n "$TOOLCHAIN_PATH" ] && export PATH="$TOOLCHAIN_PATH:$PATH"
           cd tor-src
 
           # Configure flags
@@ -347,7 +245,6 @@ jobs:
 
       - name: Strip Binary
         run: |
-          [ -n "$TOOLCHAIN_PATH" ] && export PATH="$TOOLCHAIN_PATH:$PATH"
           BINARY="output/bin/tor${{ matrix.ext }}"
           ${STRIP} "${BINARY}" 2>/dev/null || strip "${BINARY}" 2>/dev/null || true
           mv "${BINARY}" "tor-${{ matrix.os }}-${{ matrix.arch }}${{ matrix.ext }}"
