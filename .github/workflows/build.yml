@@ -81,7 +81,7 @@ jobs:
           wget -q https://zlib.net/zlib-${ZLIB_VERSION}.tar.gz
           tar xzf zlib-${ZLIB_VERSION}.tar.gz
           cd zlib-${ZLIB_VERSION}
-          CHOST=${HOST} ./configure --prefix=$DEPS_PREFIX --static
+          CC=${CC} AR=${AR} RANLIB=${RANLIB} CHOST=${HOST} ./configure --prefix=$DEPS_PREFIX --static
           make -j$(nproc)
           make install
 
@@ -113,7 +113,7 @@ jobs:
           tar xzf libevent-${LIBEVENT_VERSION}.tar.gz
           cd libevent-${LIBEVENT_VERSION}
 
-          ./configure \
+          CC=${CC} AR=${AR} RANLIB=${RANLIB} ./configure \
             --prefix=$DEPS_PREFIX \
             --host=${HOST} \
             --enable-static \
@@ -149,7 +149,7 @@ jobs:
           tar xzf xz-${XZ_VERSION}.tar.gz
           cd xz-${XZ_VERSION}
 
-          ./configure \
+          CC=${CC} AR=${AR} RANLIB=${RANLIB} ./configure \
             --prefix=$DEPS_PREFIX \
             --host=${HOST} \
             --enable-static \
