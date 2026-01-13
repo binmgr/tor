@@ -1,0 +1,448 @@
+name: Build Tor Static Binaries
+
+on:
+  push:
+    branches: [main, master]
+  schedule:
+    - cron: '0 0 1 * *'
+  workflow_dispatch:
+    inputs:
+      tor_version:
+        description: 'Tor version (empty for latest)'
+        required: false
+        default: ''
+
+env:
+  OPENSSL_VERSION: "3.2.1"
+  LIBEVENT_VERSION: "2.1.12-stable"
+  ZLIB_VERSION: "1.3.1"
+  ZSTD_VERSION: "1.5.5"
+  XZ_VERSION: "5.4.5"
+
+jobs:
+  get-version:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      tag: ${{ steps.version.outputs.tag }}
+    steps:
+      - name: Get Tor Version
+        id: version
+        run: |
+          if [ -n "${{ github.event.inputs.tor_version }}" ]; then
+            VERSION="${{ github.event.inputs.tor_version }}"
+          else
+            VERSION=$(curl -s https://dist.torproject.org/ | grep -oP 'tor-\K[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+' | sort -V | tail -1)
+          fi
+          echo "version=${VERSION}" >> $GITHUB_OUTPUT
+          echo "tag=v${VERSION}" >> $GITHUB_OUTPUT
+          echo "Tor version: ${VERSION}"
+
+  build:
+    needs: get-version
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: linux, arch: amd64, cross: x86_64-linux-musl, target_os: linux, ext: "" }
+          - { os: linux, arch: arm64, cross: aarch64-linux-musl, target_os: linux, ext: "" }
+          - { os: windows, arch: amd64, cross: x86_64-w64-mingw32, target_os: mingw, ext: ".exe" }
+          - { os: windows, arch: arm64, cross: aarch64-w64-mingw32, target_os: mingw, ext: ".exe" }
+          - { os: darwin, arch: amd64, cross: x86_64-apple-darwin23, target_os: darwin, ext: "" }
+          - { os: darwin, arch: arm64, cross: aarch64-apple-darwin23, target_os: darwin, ext: "" }
+          - { os: freebsd, arch: amd64, cross: x86_64-unknown-freebsd14, target_os: freebsd, ext: "" }
+          - { os: freebsd, arch: arm64, cross: aarch64-unknown-freebsd14, target_os: freebsd, ext: "" }
+    steps:
+      - name: Setup Environment
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential cmake pkg-config git curl wget autoconf automake libtool xz-utils
+
+      - name: Install Cross Compiler
+        id: compiler
+        run: |
+          mkdir -p $HOME/cross
+          export CROSS_ROOT="$HOME/cross"
+
+          case "${{ matrix.os }}-${{ matrix.arch }}" in
+            linux-amd64)
+              wget -q https://musl.cc/x86_64-linux-musl-cross.tgz
+              tar xzf x86_64-linux-musl-cross.tgz -C $CROSS_ROOT
+              echo "TOOLCHAIN_PATH=$CROSS_ROOT/x86_64-linux-musl-cross/bin" >> $GITHUB_ENV
+              echo "CC=x86_64-linux-musl-gcc" >> $GITHUB_ENV
+              echo "CXX=x86_64-linux-musl-g++" >> $GITHUB_ENV
+              echo "AR=x86_64-linux-musl-ar" >> $GITHUB_ENV
+              echo "RANLIB=x86_64-linux-musl-ranlib" >> $GITHUB_ENV
+              echo "STRIP=x86_64-linux-musl-strip" >> $GITHUB_ENV
+              echo "CROSS_PREFIX=x86_64-linux-musl-" >> $GITHUB_ENV
+              echo "HOST=x86_64-linux-musl" >> $GITHUB_ENV
+              ;;
+            linux-arm64)
+              wget -q https://musl.cc/aarch64-linux-musl-cross.tgz
+              tar xzf aarch64-linux-musl-cross.tgz -C $CROSS_ROOT
+              echo "TOOLCHAIN_PATH=$CROSS_ROOT/aarch64-linux-musl-cross/bin" >> $GITHUB_ENV
+              echo "CC=aarch64-linux-musl-gcc" >> $GITHUB_ENV
+              echo "CXX=aarch64-linux-musl-g++" >> $GITHUB_ENV
+              echo "AR=aarch64-linux-musl-ar" >> $GITHUB_ENV
+              echo "RANLIB=aarch64-linux-musl-ranlib" >> $GITHUB_ENV
+              echo "STRIP=aarch64-linux-musl-strip" >> $GITHUB_ENV
+              echo "CROSS_PREFIX=aarch64-linux-musl-" >> $GITHUB_ENV
+              echo "HOST=aarch64-linux-musl" >> $GITHUB_ENV
+              ;;
+            windows-amd64)
+              sudo apt-get install -y mingw-w64
+              echo "TOOLCHAIN_PATH=" >> $GITHUB_ENV
+              echo "CC=x86_64-w64-mingw32-gcc" >> $GITHUB_ENV
+              echo "CXX=x86_64-w64-mingw32-g++" >> $GITHUB_ENV
+              echo "AR=x86_64-w64-mingw32-ar" >> $GITHUB_ENV
+              echo "RANLIB=x86_64-w64-mingw32-ranlib" >> $GITHUB_ENV
+              echo "STRIP=x86_64-w64-mingw32-strip" >> $GITHUB_ENV
+              echo "CROSS_PREFIX=x86_64-w64-mingw32-" >> $GITHUB_ENV
+              echo "HOST=x86_64-w64-mingw32" >> $GITHUB_ENV
+              ;;
+            windows-arm64)
+              wget -q https://github.com/mstorsjo/llvm-mingw/releases/download/20241217/llvm-mingw-20241217-ucrt-ubuntu-20.04-x86_64.tar.xz
+              tar xJf llvm-mingw-*.tar.xz -C $CROSS_ROOT
+              echo "TOOLCHAIN_PATH=$CROSS_ROOT/llvm-mingw-20241217-ucrt-ubuntu-20.04-x86_64/bin" >> $GITHUB_ENV
+              echo "CC=aarch64-w64-mingw32-gcc" >> $GITHUB_ENV
+              echo "CXX=aarch64-w64-mingw32-g++" >> $GITHUB_ENV
+              echo "AR=aarch64-w64-mingw32-ar" >> $GITHUB_ENV
+              echo "RANLIB=aarch64-w64-mingw32-ranlib" >> $GITHUB_ENV
+              echo "STRIP=aarch64-w64-mingw32-strip" >> $GITHUB_ENV
+              echo "CROSS_PREFIX=aarch64-w64-mingw32-" >> $GITHUB_ENV
+              echo "HOST=aarch64-w64-mingw32" >> $GITHUB_ENV
+              ;;
+            darwin-amd64|darwin-arm64)
+              sudo apt-get install -y clang libxml2-dev llvm-dev uuid-dev libssl-dev
+              git clone --depth 1 https://github.com/tpoechtrager/osxcross.git $CROSS_ROOT/osxcross
+              cd $CROSS_ROOT/osxcross
+              wget -q https://github.com/joseluisq/macosx-sdks/releases/download/14.0/MacOSX14.0.sdk.tar.xz -O tarballs/MacOSX14.0.sdk.tar.xz
+              UNATTENDED=1 ./build.sh || true
+              echo "TOOLCHAIN_PATH=$CROSS_ROOT/osxcross/target/bin" >> $GITHUB_ENV
+              if [ "${{ matrix.arch }}" = "amd64" ]; then
+                echo "CC=x86_64-apple-darwin23-clang" >> $GITHUB_ENV
+                echo "CXX=x86_64-apple-darwin23-clang++" >> $GITHUB_ENV
+                echo "AR=x86_64-apple-darwin23-ar" >> $GITHUB_ENV
+                echo "RANLIB=x86_64-apple-darwin23-ranlib" >> $GITHUB_ENV
+                echo "STRIP=x86_64-apple-darwin23-strip" >> $GITHUB_ENV
+                echo "CROSS_PREFIX=x86_64-apple-darwin23-" >> $GITHUB_ENV
+                echo "HOST=x86_64-apple-darwin23" >> $GITHUB_ENV
+              else
+                echo "CC=aarch64-apple-darwin23-clang" >> $GITHUB_ENV
+                echo "CXX=aarch64-apple-darwin23-clang++" >> $GITHUB_ENV
+                echo "AR=aarch64-apple-darwin23-ar" >> $GITHUB_ENV
+                echo "RANLIB=aarch64-apple-darwin23-ranlib" >> $GITHUB_ENV
+                echo "STRIP=aarch64-apple-darwin23-strip" >> $GITHUB_ENV
+                echo "CROSS_PREFIX=aarch64-apple-darwin23-" >> $GITHUB_ENV
+                echo "HOST=aarch64-apple-darwin23" >> $GITHUB_ENV
+              fi
+              ;;
+            freebsd-amd64)
+              sudo apt-get install -y clang lld
+              wget -q https://download.freebsd.org/releases/amd64/14.0-RELEASE/base.txz
+              sudo mkdir -p /opt/freebsd
+              sudo tar xJf base.txz -C /opt/freebsd ./lib ./usr/lib ./usr/include
+              echo "TOOLCHAIN_PATH=" >> $GITHUB_ENV
+              echo "CC=clang" >> $GITHUB_ENV
+              echo "CXX=clang++" >> $GITHUB_ENV
+              echo "AR=llvm-ar" >> $GITHUB_ENV
+              echo "RANLIB=llvm-ranlib" >> $GITHUB_ENV
+              echo "STRIP=llvm-strip" >> $GITHUB_ENV
+              echo "CROSS_PREFIX=" >> $GITHUB_ENV
+              echo "HOST=x86_64-unknown-freebsd14" >> $GITHUB_ENV
+              echo "FREEBSD_SYSROOT=/opt/freebsd" >> $GITHUB_ENV
+              echo "CFLAGS=--sysroot=/opt/freebsd --target=x86_64-unknown-freebsd14" >> $GITHUB_ENV
+              echo "LDFLAGS=--sysroot=/opt/freebsd --target=x86_64-unknown-freebsd14 -fuse-ld=lld" >> $GITHUB_ENV
+              ;;
+            freebsd-arm64)
+              sudo apt-get install -y clang lld
+              wget -q https://download.freebsd.org/releases/arm64/aarch64/14.0-RELEASE/base.txz
+              sudo mkdir -p /opt/freebsd
+              sudo tar xJf base.txz -C /opt/freebsd ./lib ./usr/lib ./usr/include
+              echo "TOOLCHAIN_PATH=" >> $GITHUB_ENV
+              echo "CC=clang" >> $GITHUB_ENV
+              echo "CXX=clang++" >> $GITHUB_ENV
+              echo "AR=llvm-ar" >> $GITHUB_ENV
+              echo "RANLIB=llvm-ranlib" >> $GITHUB_ENV
+              echo "STRIP=llvm-strip" >> $GITHUB_ENV
+              echo "CROSS_PREFIX=" >> $GITHUB_ENV
+              echo "HOST=aarch64-unknown-freebsd14" >> $GITHUB_ENV
+              echo "FREEBSD_SYSROOT=/opt/freebsd" >> $GITHUB_ENV
+              echo "CFLAGS=--sysroot=/opt/freebsd --target=aarch64-unknown-freebsd14" >> $GITHUB_ENV
+              echo "LDFLAGS=--sysroot=/opt/freebsd --target=aarch64-unknown-freebsd14 -fuse-ld=lld" >> $GITHUB_ENV
+              ;;
+          esac
+
+      - name: Setup Build Environment
+        run: |
+          [ -n "$TOOLCHAIN_PATH" ] && export PATH="$TOOLCHAIN_PATH:$PATH"
+          mkdir -p $HOME/deps
+          echo "DEPS_PREFIX=$HOME/deps" >> $GITHUB_ENV
+          echo "PKG_CONFIG_PATH=$HOME/deps/lib/pkgconfig" >> $GITHUB_ENV
+          echo "PATH=$TOOLCHAIN_PATH:$PATH" >> $GITHUB_ENV
+
+      - name: Build zlib
+        run: |
+          [ -n "$TOOLCHAIN_PATH" ] && export PATH="$TOOLCHAIN_PATH:$PATH"
+          wget -q https://zlib.net/zlib-${ZLIB_VERSION}.tar.gz
+          tar xzf zlib-${ZLIB_VERSION}.tar.gz
+          cd zlib-${ZLIB_VERSION}
+
+          if [ "${{ matrix.os }}" = "windows" ]; then
+            make -f win32/Makefile.gcc PREFIX=${CROSS_PREFIX} CC=${CC} AR=${AR} RANLIB=${RANLIB}
+            cp zlib.h zconf.h $DEPS_PREFIX/include/ 2>/dev/null || mkdir -p $DEPS_PREFIX/include && cp zlib.h zconf.h $DEPS_PREFIX/include/
+            cp libz.a $DEPS_PREFIX/lib/ 2>/dev/null || mkdir -p $DEPS_PREFIX/lib && cp libz.a $DEPS_PREFIX/lib/
+          else
+            CHOST=${HOST} ./configure --prefix=$DEPS_PREFIX --static
+            make -j$(nproc)
+            make install
+          fi
+
+      - name: Build OpenSSL
+        run: |
+          [ -n "$TOOLCHAIN_PATH" ] && export PATH="$TOOLCHAIN_PATH:$PATH"
+          wget -q https://www.openssl.org/source/openssl-${OPENSSL_VERSION}.tar.gz
+          tar xzf openssl-${OPENSSL_VERSION}.tar.gz
+          cd openssl-${OPENSSL_VERSION}
+
+          case "${{ matrix.os }}-${{ matrix.arch }}" in
+            linux-amd64) TARGET="linux-x86_64" ;;
+            linux-arm64) TARGET="linux-aarch64" ;;
+            windows-amd64) TARGET="mingw64" ;;
+            windows-arm64) TARGET="mingw64" ;;
+            darwin-amd64) TARGET="darwin64-x86_64-cc" ;;
+            darwin-arm64) TARGET="darwin64-arm64-cc" ;;
+            freebsd-amd64) TARGET="BSD-x86_64" ;;
+            freebsd-arm64) TARGET="BSD-generic64" ;;
+          esac
+
+          ./Configure ${TARGET} \
+            --prefix=$DEPS_PREFIX \
+            --cross-compile-prefix=${CROSS_PREFIX} \
+            no-shared \
+            no-tests \
+            no-ui-console \
+            ${CFLAGS:+CFLAGS="$CFLAGS"} \
+            ${LDFLAGS:+LDFLAGS="$LDFLAGS"}
+
+          make -j$(nproc)
+          make install_sw
+
+      - name: Build libevent
+        run: |
+          [ -n "$TOOLCHAIN_PATH" ] && export PATH="$TOOLCHAIN_PATH:$PATH"
+          wget -q https://github.com/libevent/libevent/releases/download/release-${LIBEVENT_VERSION}/libevent-${LIBEVENT_VERSION}.tar.gz
+          tar xzf libevent-${LIBEVENT_VERSION}.tar.gz
+          cd libevent-${LIBEVENT_VERSION}
+
+          ./configure \
+            --prefix=$DEPS_PREFIX \
+            --host=${HOST} \
+            --enable-static \
+            --disable-shared \
+            --disable-samples \
+            --disable-libevent-regress \
+            CFLAGS="-I$DEPS_PREFIX/include $CFLAGS" \
+            LDFLAGS="-L$DEPS_PREFIX/lib $LDFLAGS" \
+            OPENSSL_CFLAGS="-I$DEPS_PREFIX/include" \
+            OPENSSL_LIBS="-L$DEPS_PREFIX/lib -lssl -lcrypto"
+
+          make -j$(nproc)
+          make install
+
+      - name: Build zstd
+        run: |
+          [ -n "$TOOLCHAIN_PATH" ] && export PATH="$TOOLCHAIN_PATH:$PATH"
+          wget -q https://github.com/facebook/zstd/releases/download/v${ZSTD_VERSION}/zstd-${ZSTD_VERSION}.tar.gz
+          tar xzf zstd-${ZSTD_VERSION}.tar.gz
+          cd zstd-${ZSTD_VERSION}
+
+          make -j$(nproc) lib-release \
+            CC=${CC} \
+            AR=${AR} \
+            RANLIB=${RANLIB} \
+            PREFIX=$DEPS_PREFIX
+
+          make install PREFIX=$DEPS_PREFIX
+          rm -f $DEPS_PREFIX/lib/libzstd.so* $DEPS_PREFIX/lib/libzstd.dylib* 2>/dev/null || true
+
+      - name: Build xz/liblzma
+        run: |
+          [ -n "$TOOLCHAIN_PATH" ] && export PATH="$TOOLCHAIN_PATH:$PATH"
+          wget -q https://github.com/tukaani-project/xz/releases/download/v${XZ_VERSION}/xz-${XZ_VERSION}.tar.gz
+          tar xzf xz-${XZ_VERSION}.tar.gz
+          cd xz-${XZ_VERSION}
+
+          ./configure \
+            --prefix=$DEPS_PREFIX \
+            --host=${HOST} \
+            --enable-static \
+            --disable-shared \
+            --disable-xz \
+            --disable-xzdec \
+            --disable-lzmadec \
+            --disable-lzmainfo \
+            --disable-scripts \
+            --disable-doc \
+            CFLAGS="$CFLAGS" \
+            LDFLAGS="$LDFLAGS"
+
+          make -j$(nproc)
+          make install
+
+      - name: Download Tor
+        run: |
+          TOR_VERSION="${{ needs.get-version.outputs.version }}"
+          wget -q "https://dist.torproject.org/tor-${TOR_VERSION}.tar.gz"
+          tar xzf tor-${TOR_VERSION}.tar.gz
+          mv tor-${TOR_VERSION} tor-src
+
+      - name: Build Tor
+        run: |
+          [ -n "$TOOLCHAIN_PATH" ] && export PATH="$TOOLCHAIN_PATH:$PATH"
+          cd tor-src
+
+          # Configure flags
+          CONFIGURE_FLAGS="
+            --prefix=$PWD/../output
+            --host=${HOST}
+            --enable-static-tor
+            --with-libevent-dir=$DEPS_PREFIX
+            --with-openssl-dir=$DEPS_PREFIX
+            --with-zlib-dir=$DEPS_PREFIX
+            --enable-zstd
+            --enable-lzma
+            --disable-asciidoc
+            --disable-manpage
+            --disable-html-manual
+            --disable-module-relay
+            --disable-module-dirauth
+            --disable-systemd
+            --disable-seccomp
+            --disable-libscrypt
+          "
+
+          # Platform-specific adjustments
+          case "${{ matrix.os }}" in
+            windows)
+              CONFIGURE_FLAGS="${CONFIGURE_FLAGS} --enable-static-libevent --enable-static-openssl --enable-static-zlib"
+              ;;
+            darwin)
+              CONFIGURE_FLAGS="${CONFIGURE_FLAGS} --disable-gcc-hardening"
+              ;;
+          esac
+
+          export CFLAGS="-I$DEPS_PREFIX/include $CFLAGS"
+          export LDFLAGS="-L$DEPS_PREFIX/lib $LDFLAGS -static"
+          export LIBS="-lzstd -llzma -lssl -lcrypto -levent -lz"
+
+          if [ "${{ matrix.os }}" = "windows" ]; then
+            export LIBS="$LIBS -lws2_32 -lcrypt32 -lgdi32 -liphlpapi"
+          fi
+
+          ./configure ${CONFIGURE_FLAGS} || { cat config.log; exit 1; }
+          make -j$(nproc)
+          make install
+
+      - name: Strip Binary
+        run: |
+          [ -n "$TOOLCHAIN_PATH" ] && export PATH="$TOOLCHAIN_PATH:$PATH"
+          BINARY="output/bin/tor${{ matrix.ext }}"
+          ${STRIP} "${BINARY}" 2>/dev/null || strip "${BINARY}" 2>/dev/null || true
+          mv "${BINARY}" "tor-${{ matrix.os }}-${{ matrix.arch }}${{ matrix.ext }}"
+          ls -la tor-${{ matrix.os }}-${{ matrix.arch }}${{ matrix.ext }}
+
+      - name: Generate Metadata
+        run: |
+          cat > "tor-${{ matrix.os }}-${{ matrix.arch }}.json" << EOF
+          {
+            "org.opencontainers.image.title": "Tor Static Build",
+            "org.opencontainers.image.description": "Statically compiled Tor binary",
+            "org.opencontainers.image.version": "${{ needs.get-version.outputs.version }}",
+            "org.opencontainers.image.os": "${{ matrix.os }}",
+            "org.opencontainers.image.architecture": "${{ matrix.arch }}",
+            "org.opencontainers.image.created": "${{ github.event.head_commit.timestamp }}",
+            "org.opencontainers.image.source": "${{ github.server_url }}/${{ github.repository }}",
+            "org.opencontainers.image.revision": "${{ github.sha }}",
+            "org.opencontainers.image.vendor": "${{ github.repository_owner }}",
+            "org.opencontainers.image.licenses": "BSD-3-Clause",
+            "build.target": "${{ matrix.cross }}",
+            "build.static": "true",
+            "build.stripped": "true",
+            "dependencies.openssl": "${OPENSSL_VERSION}",
+            "dependencies.libevent": "${LIBEVENT_VERSION}",
+            "dependencies.zlib": "${ZLIB_VERSION}",
+            "dependencies.zstd": "${ZSTD_VERSION}",
+            "dependencies.xz": "${XZ_VERSION}"
+          }
+          EOF
+
+      - name: Upload Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: tor-${{ matrix.os }}-${{ matrix.arch }}
+          path: |
+            tor-${{ matrix.os }}-${{ matrix.arch }}${{ matrix.ext }}
+            tor-${{ matrix.os }}-${{ matrix.arch }}.json
+          retention-days: 1
+
+  release:
+    needs: [get-version, build]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Download Artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
+
+      - name: Prepare Release
+        run: |
+          mkdir -p release
+          mv artifacts/* release/ 2>/dev/null || mv artifacts/*/* release/
+          cd release
+          chmod +x tor-linux-* tor-darwin-* tor-freebsd-* 2>/dev/null || true
+          sha256sum tor-* > checksums.txt
+
+          # Combined metadata
+          echo "[" > metadata.json
+          first=true
+          for f in *.json; do
+            [ "$f" = "metadata.json" ] && continue
+            [ "$first" = true ] && first=false || echo "," >> metadata.json
+            cat "$f" >> metadata.json
+          done
+          echo "]" >> metadata.json
+
+      - name: Delete Existing Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh release delete "${{ needs.get-version.outputs.tag }}" --repo "${{ github.repository }}" --yes --cleanup-tag 2>/dev/null || true
+
+      - name: Create Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release create "${{ needs.get-version.outputs.tag }}" \
+            --repo "${{ github.repository }}" \
+            --title "Tor ${{ needs.get-version.outputs.version }}" \
+            --notes "## Tor ${{ needs.get-version.outputs.version }} Static Builds
+
+          Fully static, multi-platform Tor binaries.
+
+          | Platform | AMD64 | ARM64 |
+          |----------|-------|-------|
+          | Linux | \`tor-linux-amd64\` | \`tor-linux-arm64\` |
+          | Windows | \`tor-windows-amd64.exe\` | \`tor-windows-arm64.exe\` |
+          | macOS | \`tor-darwin-amd64\` | \`tor-darwin-arm64\` |
+          | FreeBSD | \`tor-freebsd-amd64\` | \`tor-freebsd-arm64\` |
+
+          **Build**: Static | Stripped | BSD-3-Clause
+
+          **Dependencies**: OpenSSL ${OPENSSL_VERSION}, libevent ${LIBEVENT_VERSION}, zlib ${ZLIB_VERSION}, zstd ${ZSTD_VERSION}, xz ${XZ_VERSION}
+
+          Verify: \`sha256sum -c checksums.txt\`" \
+            release/*
