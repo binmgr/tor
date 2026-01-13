@@ -32,7 +32,7 @@ jobs:
           if [ -n "${{ github.event.inputs.tor_version }}" ]; then
             VERSION="${{ github.event.inputs.tor_version }}"
           else
-            VERSION=$(curl -s https://dist.torproject.org/ | grep -oP 'tor-\K[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+' | sort -V | tail -1)
+            VERSION=$(curl -s https://dist.torproject.org/ | grep -oP 'tor-\K[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+(-[a-z]+)?' | sort -V | tail -1)
           fi
           echo "version=${VERSION}" >> $GITHUB_OUTPUT
           echo "tag=v${VERSION}" >> $GITHUB_OUTPUT
