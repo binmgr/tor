@@ -45,8 +45,8 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - { os: linux, arch: amd64, cross: x86_64-linux-musl, target_os: linux, ext: "" }
-          - { os: linux, arch: arm64, cross: aarch64-linux-musl, target_os: linux, ext: "" }
+          - { os: linux, arch: amd64, cross: x86_64-linux-gnu, target_os: linux, ext: "" }
+          - { os: linux, arch: arm64, cross: aarch64-linux-gnu, target_os: linux, ext: "" }
     steps:
       - name: Setup Environment
         run: |
@@ -220,6 +220,7 @@ jobs:
             --disable-systemd
             --disable-seccomp
             --disable-libscrypt
+            --disable-tool-name-check
           "
 
           # Platform-specific adjustments
