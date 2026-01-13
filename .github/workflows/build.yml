@@ -298,13 +298,11 @@ jobs:
 
       - name: Create Source Archive
         run: |
-          # Create source archive without VCS files
-          tar --exclude-vcs \
-              --exclude-vcs-ignores \
-              --exclude='.git*' \
-              --exclude='.github' \
-              --transform 's,^\.,tor-builder-${{ needs.get-version.outputs.version }},' \
-              -czf tor-builder-source.tar.gz .
+          # Create source archive without VCS files using git archive
+          git archive --format=tar.gz \
+              --prefix=tor-builder-${{ needs.get-version.outputs.version }}/ \
+              -o tor-builder-source.tar.gz \
+              HEAD
 
           # Verify archive contents
           echo "Source archive contents:"
