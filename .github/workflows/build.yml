@@ -41,67 +41,53 @@ jobs:
   build:
     needs: get-version
     runs-on: ubuntu-latest
-    # Builds standard Debian/Ubuntu binaries with glibc (not musl)
+    container:
+      image: ${{ matrix.container }}
+      options: --platform=${{ matrix.platform }}
+    # Builds truly static binaries with musl (Alpine Linux)
     strategy:
       fail-fast: false
       matrix:
         include:
-          - { os: linux, arch: amd64, target_os: linux, ext: "" }
-          - { os: linux, arch: arm64, target_os: linux, ext: "" }
+          - { os: linux, arch: amd64, container: alpine:latest, platform: linux/amd64, target_os: linux, ext: "" }
+          - { os: linux, arch: arm64, container: alpine:latest, platform: linux/arm64, target_os: linux, ext: "" }
     steps:
       - name: Setup Environment
         run: |
-          sudo apt-get update
-          sudo apt-get install -y build-essential cmake pkg-config git curl wget autoconf automake libtool xz-utils
-
-      - name: Install Cross Compiler
-        id: compiler
-        run: |
-          case "${{ matrix.os }}-${{ matrix.arch }}" in
-            linux-amd64)
-              # Use native compiler for AMD64
-              echo "CC=gcc" >> $GITHUB_ENV
-              echo "CXX=g++" >> $GITHUB_ENV
-              echo "AR=ar" >> $GITHUB_ENV
-              echo "RANLIB=ranlib" >> $GITHUB_ENV
-              echo "STRIP=strip" >> $GITHUB_ENV
-              echo "CROSS_PREFIX=" >> $GITHUB_ENV
-              echo "HOST=x86_64-linux-gnu" >> $GITHUB_ENV
-              ;;
-            linux-arm64)
-              # Install cross-compiler for ARM64
-              sudo apt-get install -y gcc-aarch64-linux-gnu g++-aarch64-linux-gnu
-              echo "CC=aarch64-linux-gnu-gcc" >> $GITHUB_ENV
-              echo "CXX=aarch64-linux-gnu-g++" >> $GITHUB_ENV
-              echo "AR=aarch64-linux-gnu-ar" >> $GITHUB_ENV
-              echo "RANLIB=aarch64-linux-gnu-ranlib" >> $GITHUB_ENV
-              echo "STRIP=aarch64-linux-gnu-strip" >> $GITHUB_ENV
-              echo "CROSS_PREFIX=" >> $GITHUB_ENV
-              echo "HOST=aarch64-linux-gnu" >> $GITHUB_ENV
-              ;;
-          esac
+          # Install build dependencies in Alpine
+          apk add --no-cache \
+            build-base \
+            cmake \
+            pkgconfig \
+            git \
+            curl \
+            wget \
+            autoconf \
+            automake \
+            libtool \
+            linux-headers \
+            perl
 
       - name: Setup Build Environment
         run: |
           mkdir -p $HOME/deps
           echo "DEPS_PREFIX=$HOME/deps" >> $GITHUB_ENV
           echo "PKG_CONFIG_PATH=$HOME/deps/lib/pkgconfig" >> $GITHUB_ENV
+          echo "CC=gcc" >> $GITHUB_ENV
+          echo "CXX=g++" >> $GITHUB_ENV
+          echo "AR=ar" >> $GITHUB_ENV
+          echo "RANLIB=ranlib" >> $GITHUB_ENV
+          echo "STRIP=strip" >> $GITHUB_ENV
+          echo "HOST=$(uname -m)-alpine-linux-musl" >> $GITHUB_ENV
 
       - name: Build zlib
         run: |
           wget -q https://zlib.net/zlib-${ZLIB_VERSION}.tar.gz
           tar xzf zlib-${ZLIB_VERSION}.tar.gz
           cd zlib-${ZLIB_VERSION}
-
-          if [ "${{ matrix.os }}" = "windows" ]; then
-            make -f win32/Makefile.gcc PREFIX=${CROSS_PREFIX} CC=${CC} AR=${AR} RANLIB=${RANLIB}
-            cp zlib.h zconf.h $DEPS_PREFIX/include/ 2>/dev/null || mkdir -p $DEPS_PREFIX/include && cp zlib.h zconf.h $DEPS_PREFIX/include/
-            cp libz.a $DEPS_PREFIX/lib/ 2>/dev/null || mkdir -p $DEPS_PREFIX/lib && cp libz.a $DEPS_PREFIX/lib/
-          else
-            CHOST=${HOST} ./configure --prefix=$DEPS_PREFIX --static
-            make -j$(nproc)
-            make install
-          fi
+          CHOST=${HOST} ./configure --prefix=$DEPS_PREFIX --static
+          make -j$(nproc)
+          make install
 
       - name: Build OpenSSL
         run: |
@@ -109,26 +95,18 @@ jobs:
           tar xzf openssl-${OPENSSL_VERSION}.tar.gz
           cd openssl-${OPENSSL_VERSION}
 
-          case "${{ matrix.os }}-${{ matrix.arch }}" in
-            linux-amd64) TARGET="linux-x86_64" ;;
-            linux-arm64) TARGET="linux-aarch64" ;;
-            windows-amd64) TARGET="mingw64" ;;
-            windows-arm64) TARGET="mingw64" ;;
-            darwin-amd64) TARGET="darwin64-x86_64-cc" ;;
-            darwin-arm64) TARGET="darwin64-arm64-cc" ;;
-            freebsd-amd64) TARGET="BSD-x86_64" ;;
-            freebsd-arm64) TARGET="BSD-generic64" ;;
+          # Determine OpenSSL target based on architecture
+          case "${{ matrix.arch }}" in
+            amd64) TARGET="linux-x86_64" ;;
+            arm64) TARGET="linux-aarch64" ;;
           esac
 
           ./Configure ${TARGET} \
             --prefix=$DEPS_PREFIX \
             --libdir=lib \
-            --cross-compile-prefix=${CROSS_PREFIX} \
             no-shared \
             no-tests \
-            no-ui-console \
-            ${CFLAGS:+CFLAGS="$CFLAGS"} \
-            ${LDFLAGS:+LDFLAGS="$LDFLAGS"}
+            no-ui-console
 
           make -j$(nproc)
           make install_sw
@@ -224,23 +202,9 @@ jobs:
             --disable-tool-name-check
           "
 
-          # Platform-specific adjustments
-          case "${{ matrix.os }}" in
-            windows)
-              CONFIGURE_FLAGS="${CONFIGURE_FLAGS} --enable-static-libevent --enable-static-openssl --enable-static-zlib"
-              ;;
-            darwin)
-              CONFIGURE_FLAGS="${CONFIGURE_FLAGS} --disable-gcc-hardening"
-              ;;
-          esac
-
-          export CFLAGS="-I$DEPS_PREFIX/include $CFLAGS"
-          export LDFLAGS="-L$DEPS_PREFIX/lib $LDFLAGS -static"
+          export CFLAGS="-I$DEPS_PREFIX/include -static"
+          export LDFLAGS="-L$DEPS_PREFIX/lib -static"
           export LIBS="-lzstd -llzma -lssl -lcrypto -levent -lz"
-
-          if [ "${{ matrix.os }}" = "windows" ]; then
-            export LIBS="$LIBS -lws2_32 -lcrypt32 -lgdi32 -liphlpapi"
-          fi
 
           ./configure ${CONFIGURE_FLAGS} || { cat config.log; exit 1; }
           make -j$(nproc)
@@ -257,8 +221,8 @@ jobs:
         run: |
           cat > "tor-${{ matrix.os }}-${{ matrix.arch }}.json" << EOF
           {
-            "org.opencontainers.image.title": "Tor Static Build",
-            "org.opencontainers.image.description": "Statically compiled Tor binary",
+            "org.opencontainers.image.title": "Tor Static Build (musl)",
+            "org.opencontainers.image.description": "Fully static Tor binary built with musl libc (Alpine Linux)",
             "org.opencontainers.image.version": "${{ needs.get-version.outputs.version }}",
             "org.opencontainers.image.os": "${{ matrix.os }}",
             "org.opencontainers.image.architecture": "${{ matrix.arch }}",
@@ -268,6 +232,7 @@ jobs:
             "org.opencontainers.image.vendor": "${{ github.repository_owner }}",
             "org.opencontainers.image.licenses": "BSD-3-Clause",
             "build.platform": "${{ matrix.os }}-${{ matrix.arch }}",
+            "build.libc": "musl",
             "build.static": "true",
             "build.stripped": "true",
             "dependencies.openssl": "${OPENSSL_VERSION}",
@@ -320,8 +285,10 @@ jobs:
           mv artifacts/* release/ 2>/dev/null || mv artifacts/*/* release/
           mv tor-builder-source.tar.gz release/
           cd release
-          chmod +x tor-linux-* tor-darwin-* tor-freebsd-* 2>/dev/null || true
+          chmod +x tor-linux-* 2>/dev/null || true
+          # Generate checksums for all release files
           sha256sum tor-* > checksums.txt
+          cat checksums.txt
 
           # Combined metadata
           echo "[" > metadata.json
@@ -347,7 +314,8 @@ jobs:
             --title "Tor ${{ needs.get-version.outputs.version }}" \
             --notes "## Tor ${{ needs.get-version.outputs.version }} Static Builds
 
-          Fully static Linux binaries built on Debian/Ubuntu with glibc.
+          **Truly static** Linux binaries built with **musl libc** on Alpine Linux.
+          Zero external dependencies - works on any Linux distribution, any version.
 
           ### Binaries
 
@@ -361,9 +329,13 @@ jobs:
 
           ### Build Info
 
-          **Type**: Static | Stripped | BSD-3-Clause
-          **Libc**: glibc (Debian/Ubuntu standard)
+          **Type**: Fully Static | Stripped | BSD-3-Clause
+          **Libc**: musl (Alpine Linux) - universal compatibility
           **Dependencies**: OpenSSL ${OPENSSL_VERSION}, libevent ${LIBEVENT_VERSION}, zlib ${ZLIB_VERSION}, zstd ${ZSTD_VERSION}, xz ${XZ_VERSION}
 
-          **Verify**: \`sha256sum -c checksums.txt\`" \
+          ### Verification
+
+          \`\`\`bash
+          sha256sum -c checksums.txt
+          \`\`\`" \
             release/*
