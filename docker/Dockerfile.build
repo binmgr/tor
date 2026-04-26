@@ -1,270 +1,127 @@
 # =============================================================================
 # Tor Build Environment
 # =============================================================================
-# Pre-built dependencies for static Tor compilation
-# Supports: linux/amd64 (native), linux/arm64 (cross-compile on amd64)
-#
-# Usage:
-#   docker build -f docker/Dockerfile.build -t ghcr.io/binmgr/tor:build .
-#   docker run --rm -v $(pwd):/workspace ghcr.io/binmgr/tor:build
-# =============================================================================
+FROM alpine:latest
 
-FROM alpine:3.21
-
-# Dependency versions
-ARG OPENSSL_VERSION=3.2.1
-ARG LIBEVENT_VERSION=2.1.12-stable
-ARG ZLIB_VERSION=1.3.1
-ARG ZSTD_VERSION=1.5.5
-ARG XZ_VERSION=5.4.5
-ARG BOOTLIN_VERSION=2024.02-1
-
-# Install build essentials
+# Install build tools and ALL static libraries for native builds
 RUN apk add --no-cache \
-    build-base \
-    curl \
-    wget \
-    git \
-    autoconf \
-    automake \
-    libtool \
-    pkgconf \
-    linux-headers \
-    tar \
-    xz \
-    bzip2 \
-    ca-certificates \
-    perl \
-    # For running glibc binaries (Bootlin toolchain)
-    gcompat
+    build-base curl wget git autoconf automake libtool pkgconf \
+    linux-headers tar xz bzip2 ca-certificates perl \
+    # Static libraries (native amd64)
+    zlib-static openssl-libs-static libevent-static zstd-static xz-static \
+    # Dev headers
+    zlib-dev openssl-dev libevent-dev zstd-dev xz-dev
 
-# Set up directories
-ENV PREFIX_AMD64=/opt/deps/amd64
+# For cross-compile: need to build deps from source
 ENV PREFIX_ARM64=/opt/deps/arm64
-ENV BOOTLIN_DIR=/opt/cross/aarch64-linux-musl
+ENV CROSS=/opt/cross/aarch64-linux-musl-cross
 
-RUN mkdir -p ${PREFIX_AMD64} ${PREFIX_ARM64} /build
+RUN mkdir -p ${PREFIX_ARM64} /build /opt/cross
 
 WORKDIR /build
 
-# =============================================================================
-# Download all sources
-# =============================================================================
+# Install musl-cross-make toolchain
+RUN wget -q "https://musl.cc/aarch64-linux-musl-cross.tgz" && \
+    tar xzf aarch64-linux-musl-cross.tgz -C /opt/cross && \
+    rm -f aarch64-linux-musl-cross.tgz
+
+ENV PATH="${CROSS}/bin:${PATH}"
+
+# Download sources for ARM64 cross-compile
+ARG ZLIB_VERSION=1.3.2
+ARG OPENSSL_VERSION=3.2.1
+ARG LIBEVENT_VERSION=2.1.12-stable
+ARG ZSTD_VERSION=1.5.5
+ARG XZ_VERSION=5.4.5
+
 RUN wget -q "https://zlib.net/zlib-${ZLIB_VERSION}.tar.gz" && \
     wget -q "https://www.openssl.org/source/openssl-${OPENSSL_VERSION}.tar.gz" && \
     wget -q "https://github.com/libevent/libevent/releases/download/release-${LIBEVENT_VERSION}/libevent-${LIBEVENT_VERSION}.tar.gz" && \
     wget -q "https://github.com/facebook/zstd/releases/download/v${ZSTD_VERSION}/zstd-${ZSTD_VERSION}.tar.gz" && \
     wget -q "https://github.com/tukaani-project/xz/releases/download/v${XZ_VERSION}/xz-${XZ_VERSION}.tar.gz"
 
-# =============================================================================
-# Install Bootlin cross-compiler (for ARM64 cross-compilation)
-# =============================================================================
-RUN mkdir -p /opt/cross && \
-    wget -q "https://toolchains.bootlin.com/downloads/releases/toolchains/aarch64/tarballs/aarch64--musl--stable-${BOOTLIN_VERSION}.tar.bz2" && \
-    tar xjf "aarch64--musl--stable-${BOOTLIN_VERSION}.tar.bz2" -C /opt/cross && \
-    mv "/opt/cross/aarch64--musl--stable-${BOOTLIN_VERSION}" ${BOOTLIN_DIR} && \
-    rm -f "aarch64--musl--stable-${BOOTLIN_VERSION}.tar.bz2" && \
-    # Create wrapper scripts that call .br_real directly (avoids toolchain-wrapper issues)
-    cd ${BOOTLIN_DIR}/bin && \
-    for tool in gcc g++; do \
-        rm -f aarch64-linux-$tool && \
-        printf '#!/bin/sh\nexec %s/bin/aarch64-buildroot-linux-musl-'$tool'.br_real "$@"\n' ${BOOTLIN_DIR} > aarch64-linux-$tool && \
-        chmod +x aarch64-linux-$tool; \
-    done && \
-    for tool in ar strip ranlib; do \
-        rm -f aarch64-linux-$tool && \
-        ln -sf aarch64-buildroot-linux-musl-$tool aarch64-linux-$tool; \
-    done
-
-ENV PATH="${BOOTLIN_DIR}/bin:${PATH}"
-
-# =============================================================================
-# Build dependencies for AMD64 (native)
-# =============================================================================
-RUN tar xzf zlib-${ZLIB_VERSION}.tar.gz && \
-    cd zlib-${ZLIB_VERSION} && \
-    ./configure --prefix=${PREFIX_AMD64} --static && \
-    make -j$(nproc) && make install && \
-    cd .. && rm -rf zlib-${ZLIB_VERSION}
-
-RUN tar xzf openssl-${OPENSSL_VERSION}.tar.gz && \
-    cd openssl-${OPENSSL_VERSION} && \
-    ./Configure linux-x86_64 \
-        --prefix=${PREFIX_AMD64} \
-        --libdir=lib \
-        no-shared no-tests no-ui-console && \
-    make -j$(nproc) && make install_sw && \
-    cd .. && rm -rf openssl-${OPENSSL_VERSION}
-
-RUN tar xzf libevent-${LIBEVENT_VERSION}.tar.gz && \
-    cd libevent-${LIBEVENT_VERSION} && \
-    ./configure \
-        --prefix=${PREFIX_AMD64} \
-        --enable-static --disable-shared \
-        --disable-samples --disable-libevent-regress \
-        CFLAGS="-I${PREFIX_AMD64}/include" \
-        LDFLAGS="-L${PREFIX_AMD64}/lib" \
-        OPENSSL_CFLAGS="-I${PREFIX_AMD64}/include" \
-        OPENSSL_LIBS="-L${PREFIX_AMD64}/lib -lssl -lcrypto" && \
-    make -j$(nproc) && make install && \
-    cd .. && rm -rf libevent-${LIBEVENT_VERSION}
-
-RUN tar xzf zstd-${ZSTD_VERSION}.tar.gz && \
-    cd zstd-${ZSTD_VERSION} && \
-    make -j$(nproc) lib-release PREFIX=${PREFIX_AMD64} && \
-    make install PREFIX=${PREFIX_AMD64} && \
-    rm -f ${PREFIX_AMD64}/lib/libzstd.so* && \
-    cd .. && rm -rf zstd-${ZSTD_VERSION}
-
-RUN tar xzf xz-${XZ_VERSION}.tar.gz && \
-    cd xz-${XZ_VERSION} && \
-    ./configure \
-        --prefix=${PREFIX_AMD64} \
-        --enable-static --disable-shared \
-        --disable-xz --disable-xzdec --disable-lzmadec \
-        --disable-lzmainfo --disable-scripts --disable-doc && \
-    make -j$(nproc) && make install && \
-    cd .. && rm -rf xz-${XZ_VERSION}
-
-# =============================================================================
-# Build dependencies for ARM64 (cross-compile)
-# =============================================================================
-RUN tar xzf zlib-${ZLIB_VERSION}.tar.gz && \
-    cd zlib-${ZLIB_VERSION} && \
-    CHOST=aarch64-linux-musl CC=aarch64-linux-gcc AR=aarch64-linux-ar RANLIB=aarch64-linux-ranlib \
+# Build ARM64 dependencies
+RUN tar xzf zlib-*.tar.gz && cd zlib-*/ && \
+    CHOST=aarch64-linux-musl CC=aarch64-linux-musl-gcc AR=aarch64-linux-musl-ar RANLIB=aarch64-linux-musl-ranlib \
     ./configure --prefix=${PREFIX_ARM64} --static && \
-    make -j$(nproc) && make install && \
-    cd .. && rm -rf zlib-${ZLIB_VERSION}
+    make -j$(nproc) && make install && cd .. && rm -rf zlib-*/
 
-RUN tar xzf openssl-${OPENSSL_VERSION}.tar.gz && \
-    cd openssl-${OPENSSL_VERSION} && \
-    ./Configure linux-aarch64 \
-        --prefix=${PREFIX_ARM64} \
-        --libdir=lib \
-        --cross-compile-prefix=aarch64-linux- \
-        no-shared no-tests no-ui-console && \
-    make -j$(nproc) && make install_sw && \
-    cd .. && rm -rf openssl-${OPENSSL_VERSION}
+RUN tar xzf openssl-*.tar.gz && cd openssl-*/ && \
+    ./Configure linux-aarch64 --prefix=${PREFIX_ARM64} --libdir=lib \
+        --cross-compile-prefix=aarch64-linux-musl- no-shared no-tests no-ui-console && \
+    make -j$(nproc) && make install_sw && cd .. && rm -rf openssl-*/
 
-RUN tar xzf libevent-${LIBEVENT_VERSION}.tar.gz && \
-    cd libevent-${LIBEVENT_VERSION} && \
-    ./configure \
-        --prefix=${PREFIX_ARM64} \
-        --host=aarch64-linux-musl \
-        --enable-static --disable-shared \
-        --disable-samples --disable-libevent-regress \
-        CFLAGS="-I${PREFIX_ARM64}/include" \
-        LDFLAGS="-L${PREFIX_ARM64}/lib" \
-        OPENSSL_CFLAGS="-I${PREFIX_ARM64}/include" \
-        OPENSSL_LIBS="-L${PREFIX_ARM64}/lib -lssl -lcrypto" && \
-    make -j$(nproc) && make install && \
-    cd .. && rm -rf libevent-${LIBEVENT_VERSION}
+RUN tar xzf libevent-*.tar.gz && cd libevent-*/ && \
+    ./configure --prefix=${PREFIX_ARM64} --host=aarch64-linux-musl \
+        --enable-static --disable-shared --disable-samples --disable-libevent-regress \
+        CFLAGS="-I${PREFIX_ARM64}/include" LDFLAGS="-L${PREFIX_ARM64}/lib" \
+        OPENSSL_CFLAGS="-I${PREFIX_ARM64}/include" OPENSSL_LIBS="-L${PREFIX_ARM64}/lib -lssl -lcrypto" && \
+    make -j$(nproc) && make install && cd .. && rm -rf libevent-*/
 
-RUN tar xzf zstd-${ZSTD_VERSION}.tar.gz && \
-    cd zstd-${ZSTD_VERSION} && \
-    make -j$(nproc) lib-release \
-        CC=aarch64-linux-gcc \
-        AR=aarch64-linux-ar \
-        RANLIB=aarch64-linux-ranlib \
-        PREFIX=${PREFIX_ARM64} && \
+RUN tar xzf zstd-*.tar.gz && cd zstd-*/ && \
+    make -j$(nproc) lib-release CC=aarch64-linux-musl-gcc AR=aarch64-linux-musl-ar \
+        RANLIB=aarch64-linux-musl-ranlib PREFIX=${PREFIX_ARM64} && \
     make install PREFIX=${PREFIX_ARM64} && \
-    rm -f ${PREFIX_ARM64}/lib/libzstd.so* && \
-    cd .. && rm -rf zstd-${ZSTD_VERSION}
+    rm -f ${PREFIX_ARM64}/lib/libzstd.so* && cd .. && rm -rf zstd-*/
 
-RUN tar xzf xz-${XZ_VERSION}.tar.gz && \
-    cd xz-${XZ_VERSION} && \
-    ./configure \
-        --prefix=${PREFIX_ARM64} \
-        --host=aarch64-linux-musl \
-        --enable-static --disable-shared \
-        --disable-xz --disable-xzdec --disable-lzmadec \
-        --disable-lzmainfo --disable-scripts --disable-doc && \
-    make -j$(nproc) && make install && \
-    cd .. && rm -rf xz-${XZ_VERSION}
+RUN tar xzf xz-*.tar.gz && cd xz-*/ && \
+    ./configure --prefix=${PREFIX_ARM64} --host=aarch64-linux-musl \
+        --enable-static --disable-shared --disable-xz --disable-xzdec \
+        --disable-lzmadec --disable-lzmainfo --disable-scripts --disable-doc && \
+    make -j$(nproc) && make install && cd .. && rm -rf xz-*/
 
-# Cleanup source tarballs
 RUN rm -rf /build/*
 
-# =============================================================================
 # Build script
-# =============================================================================
 COPY <<'EOF' /usr/local/bin/build-tor
 #!/bin/sh
 set -e
-
 ARCH="${1:-amd64}"
 TOR_VERSION="${2:-}"
 
-# Determine prefix and compiler based on architecture
 case "$ARCH" in
     amd64)
-        PREFIX=/opt/deps/amd64
-        CC=gcc
-        STRIP=strip
-        HOST=""
+        CC=gcc; STRIP=strip; HOST=""
+        CFLAGS="-I/usr/include -static"
+        LDFLAGS="-L/usr/lib -static"
+        PKG_CONFIG_PATH="/usr/lib/pkgconfig"
+        LIBEVENT_DIR="/usr"; OPENSSL_DIR="/usr"; ZLIB_DIR="/usr"
         ;;
     arm64)
+        CC=aarch64-linux-musl-gcc; STRIP=aarch64-linux-musl-strip; HOST="--host=aarch64-linux-musl"
         PREFIX=/opt/deps/arm64
-        CC=aarch64-linux-gcc
-        STRIP=aarch64-linux-strip
-        HOST="--host=aarch64-linux-musl"
+        CFLAGS="-I${PREFIX}/include -static"
+        LDFLAGS="-L${PREFIX}/lib -static"
+        PKG_CONFIG_PATH="${PREFIX}/lib/pkgconfig"
+        LIBEVENT_DIR="${PREFIX}"; OPENSSL_DIR="${PREFIX}"; ZLIB_DIR="${PREFIX}"
         ;;
-    *)
-        echo "Unknown architecture: $ARCH"
-        exit 1
-        ;;
+    *) echo "Unknown: $ARCH"; exit 1 ;;
 esac
 
-# Get Tor version if not specified
-if [ -z "$TOR_VERSION" ]; then
-    TOR_VERSION=$(curl -s https://dist.torproject.org/ | grep -oP 'tor-\K[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+' | sort -V | tail -1)
-fi
+[ -z "$TOR_VERSION" ] && TOR_VERSION=$(wget -qO- https://dist.torproject.org/ | grep -oE 'tor-[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+' | sed 's/tor-//' | sort -V | tail -1)
 
 echo "Building Tor ${TOR_VERSION} for ${ARCH}..."
-
 cd /build
 wget -q "https://dist.torproject.org/tor-${TOR_VERSION}.tar.gz"
-tar xzf tor-${TOR_VERSION}.tar.gz
-cd tor-${TOR_VERSION}
+tar xzf tor-${TOR_VERSION}.tar.gz && cd tor-${TOR_VERSION}
 
-export CC
-export CFLAGS="-I${PREFIX}/include -static"
-export LDFLAGS="-L${PREFIX}/lib -static"
+export CC CFLAGS LDFLAGS PKG_CONFIG_PATH
 export LIBS="-lzstd -llzma -lssl -lcrypto -levent -lz"
-export PKG_CONFIG_PATH="${PREFIX}/lib/pkgconfig"
 
-./configure \
-    ${HOST} \
-    --prefix=/output \
-    --enable-static-tor \
-    --with-libevent-dir=${PREFIX} \
-    --with-openssl-dir=${PREFIX} \
-    --with-zlib-dir=${PREFIX} \
-    --enable-zstd \
-    --enable-lzma \
-    --disable-asciidoc \
-    --disable-manpage \
-    --disable-html-manual \
-    --disable-module-relay \
-    --disable-module-dirauth \
-    --disable-systemd \
-    --disable-seccomp \
-    --disable-libscrypt \
-    --disable-tool-name-check
+./configure ${HOST} --prefix=/output --enable-static-tor \
+    --with-libevent-dir=${LIBEVENT_DIR} --with-openssl-dir=${OPENSSL_DIR} --with-zlib-dir=${ZLIB_DIR} \
+    --enable-zstd --enable-lzma --disable-asciidoc --disable-manpage --disable-html-manual \
+    --disable-module-relay --disable-module-dirauth --disable-systemd --disable-seccomp \
+    --disable-libscrypt --disable-tool-name-check
 
 make -j$(nproc)
 ${STRIP} src/app/tor
-
 mkdir -p /output
 cp src/app/tor /output/tor-linux-${ARCH}
+echo "${TOR_VERSION}" > /output/VERSION
 echo "Built: /output/tor-linux-${ARCH}"
-ls -lh /output/tor-linux-${ARCH}
 EOF
 
 RUN chmod +x /usr/local/bin/build-tor
-
 WORKDIR /workspace
-VOLUME ["/workspace", "/output"]
-
-# Default: show help
-CMD ["echo", "Usage: docker run --rm -v $(pwd)/output:/output ghcr.io/binmgr/tor:build build-tor [amd64|arm64] [version]"]
+CMD ["echo", "Usage: build-tor [amd64|arm64] [version]"]
