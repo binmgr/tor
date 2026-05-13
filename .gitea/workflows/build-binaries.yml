@@ -1,4 +1,4 @@
-name: Build Tor Static Binaries
+name: Build Binaries
 
 on:
   push:

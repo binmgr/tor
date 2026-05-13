@@ -5,7 +5,7 @@ FROM alpine:latest
 
 # Install build tools and ALL static libraries for native builds
 RUN apk add --no-cache \
-    build-base curl wget git autoconf automake libtool pkgconf \
+    build-base curl wget git autoconf automake libtool pkgconf zig llvm20 \
     linux-headers tar xz bzip2 ca-certificates perl \
     # Static libraries (native amd64)
     zlib-static openssl-libs-static libevent-static zstd-static xz-static \
@@ -14,16 +14,20 @@ RUN apk add --no-cache \
 
 # For cross-compile: need to build deps from source
 ENV PREFIX_ARM64=/opt/deps/arm64
-ENV CROSS=/opt/cross/aarch64-linux-musl-cross
+ENV CROSS=/opt/cross
 
 RUN mkdir -p ${PREFIX_ARM64} /build /opt/cross
 
 WORKDIR /build
 
-# Install musl-cross-make toolchain
-RUN wget -q "https://musl.cc/aarch64-linux-musl-cross.tgz" && \
-    tar xzf aarch64-linux-musl-cross.tgz -C /opt/cross && \
-    rm -f aarch64-linux-musl-cross.tgz
+# Provide a stable arm64-musl cross toolchain via Zig wrappers.
+RUN mkdir -p ${CROSS}/bin && \
+    printf '#!/bin/sh\nexec zig cc -target aarch64-linux-musl "$@"\n' > ${CROSS}/bin/aarch64-linux-musl-gcc && \
+    printf '#!/bin/sh\nexec zig c++ -target aarch64-linux-musl "$@"\n' > ${CROSS}/bin/aarch64-linux-musl-g++ && \
+    printf '#!/bin/sh\nexec zig ar "$@"\n' > ${CROSS}/bin/aarch64-linux-musl-ar && \
+    printf '#!/bin/sh\nexec zig ranlib "$@"\n' > ${CROSS}/bin/aarch64-linux-musl-ranlib && \
+    printf '#!/bin/sh\nexec llvm20-strip "$@"\n' > ${CROSS}/bin/aarch64-linux-musl-strip && \
+    chmod +x ${CROSS}/bin/aarch64-linux-musl-*
 
 ENV PATH="${CROSS}/bin:${PATH}"
 

@@ -121,8 +121,8 @@ This repository includes workflows for multiple CI/CD platforms:
 
 | Platform | Workflow File | Status |
 |----------|---------------|--------|
-| **GitHub Actions** | `.github/workflows/build.yml` | Full support |
-| **Gitea Actions** | `.gitea/workflows/build.yml` | Full support |
+| **GitHub Actions** | `.github/workflows/build-env-image.yml`, `.github/workflows/build-binaries.yml` | Full support |
+| **Gitea Actions** | `.gitea/workflows/build-env-image.yml`, `.gitea/workflows/build-binaries.yml` | Full support |
 | **Nektos/act** | Compatible with GitHub Actions | Local testing |
 
 ### Running Locally with Nektos/act
@@ -192,10 +192,12 @@ ssh -o ProxyCommand="nc -X 5 -x 127.0.0.1:9050 %h %p" user@host
 .
 ├── .github/
 │   └── workflows/
-│       └── build.yml          # GitHub Actions workflow
+│       ├── build-env-image.yml
+│       └── build-binaries.yml
 ├── .gitea/
 │   └── workflows/
-│       └── build.yml          # Gitea Actions workflow
+│       ├── build-env-image.yml
+│       └── build-binaries.yml
 ├── LICENSE.md                 # License information
 └── README.md                  # This file
 ```
