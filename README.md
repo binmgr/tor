@@ -4,13 +4,13 @@
 [![License](https://img.shields.io/badge/license-BSD--3--Clause-blue)](LICENSE.md)
 [![Tor](https://img.shields.io/badge/Tor-latest-purple)](https://www.torproject.org)
 
-> **Fully static, multi-platform Tor binaries with all features enabled**
+> **Fully static, multi-platform Tor binaries — built and released automatically**
 
 ---
 
 ## Overview
 
-This repository provides automated builds of Tor as **fully static binaries** for multiple platforms and architectures. Binaries are built using **musl libc** for maximum portability and are stripped for minimal size.
+This repository provides automated builds of Tor as **fully static binaries** for multiple platforms and architectures. Binaries are stripped for minimal size and linked statically against all dependencies so they run with no external libraries required.
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
@@ -40,33 +40,31 @@ Download the latest binaries from the [Releases](../../releases/latest) page.
 
 ### Checksums
 
-Each release includes SHA256 checksums in `checksums.txt` for verification:
+Each release includes SHA256 checksums in `checksums.txt`:
 
 ```bash
-# Verify download
 sha256sum -c checksums.txt
 ```
 
 ## Features
 
-### Enabled Components
+### Statically Linked Dependencies
 
-| Component | Description |
-|-----------|-------------|
-| **OpenSSL** | TLS/SSL support for secure connections |
-| **libevent** | High-performance event notification |
-| **zlib** | Compression support |
-| **zstd** | Zstandard compression (faster) |
-| **liblzma** | LZMA compression support |
-| **libcap** | Linux capabilities (Linux only) |
+| Library | Version | Purpose |
+|---------|---------|---------|
+| **OpenSSL** | 3.2.1 | TLS/SSL cryptographic library |
+| **libevent** | 2.1.12-stable | Event notification library |
+| **zlib** | 1.3.1 | Compression support |
+| **zstd** | 1.5.5 | Zstandard compression (faster) |
+| **liblzma** | 5.4.5 | LZMA compression support |
 
-### Build Configuration
+### Tor Configure Flags
 
 ```bash
 --enable-static-tor
---enable-static-libevent
---enable-static-openssl
---enable-static-zlib
+--with-libevent-dir=<deps>
+--with-openssl-dir=<deps>
+--with-zlib-dir=<deps>
 --enable-zstd
 --enable-lzma
 --disable-asciidoc
@@ -74,26 +72,39 @@ sha256sum -c checksums.txt
 --disable-html-manual
 --disable-module-relay
 --disable-module-dirauth
+--disable-systemd
+--disable-seccomp
+--disable-libscrypt
+
+# Windows only
+--enable-static-libevent
+--enable-static-openssl
+--enable-static-zlib
+
+# macOS only
+--disable-gcc-hardening
 ```
 
-### Security Features
+### Toolchains
 
-- Position Independent Executable (PIE)
-- Stack protector
-- RELRO (Relocation Read-Only)
-- FORTIFY_SOURCE
+| Platform | Toolchain |
+|----------|-----------|
+| Linux | musl-cross (musl libc, fully static) |
+| Windows | mingw-w64 (amd64), llvm-mingw (arm64) |
+| macOS | osxcross with MacOSX 14.0 SDK |
+| FreeBSD | clang + lld with FreeBSD 14.1 sysroot |
 
 ## Build Schedule
 
 | Trigger | Description |
 |---------|-------------|
-| **Push** | Builds on every push to main branch |
+| **Push** | Builds on every push to main/master that touches workflow or Dockerfile |
 | **Monthly** | Scheduled build on the 1st of each month |
-| **Manual** | Can be triggered manually via workflow dispatch |
+| **Manual** | Triggered via workflow dispatch with optional version override |
 
 ## Version Scheme
 
-Release versions follow Tor's version numbering:
+Release tags follow Tor's version numbering:
 
 ```
 v{TOR_VERSION}
@@ -101,37 +112,7 @@ v{TOR_VERSION}
 Example: v0.4.8.10, v0.4.8.11
 ```
 
-## Multi-Architecture Support
-
-All builds include proper OCI annotations for multi-architecture support:
-
-| Label | Description |
-|-------|-------------|
-| `org.opencontainers.image.title` | Tor Static Build |
-| `org.opencontainers.image.version` | Tor version |
-| `org.opencontainers.image.os` | Target operating system |
-| `org.opencontainers.image.architecture` | Target architecture |
-| `org.opencontainers.image.created` | Build timestamp |
-| `org.opencontainers.image.source` | Repository URL |
-| `org.opencontainers.image.revision` | Git commit SHA |
-
-## CI/CD Platform Support
-
-This repository includes workflows for multiple CI/CD platforms:
-
-| Platform | Workflow File | Status |
-|----------|---------------|--------|
-| **GitHub Actions** | `.github/workflows/build-env-image.yml`, `.github/workflows/build-binaries.yml` | Full support |
-| **Gitea Actions** | `.gitea/workflows/build-env-image.yml`, `.gitea/workflows/build-binaries.yml` | Full support |
-| **Nektos/act** | Compatible with GitHub Actions | Local testing |
-
-### Running Locally with Nektos/act
-
-```bash
-# Install act (https://github.com/nektos/act)
-# Then run:
-act push
-```
+The latest released Tor version is detected automatically at build time from the Tor Project's distribution server.
 
 ## Usage Examples
 
@@ -186,20 +167,40 @@ ssh -o ProxyCommand="nc -X 5 -x 127.0.0.1:9050 %h %p" user@host
 └──────────┴─────────┴─────────┴─────────┴─────────┘
 ```
 
+## CI/CD Platform Support
+
+| Platform | Workflow Files | Notes |
+|----------|----------------|-------|
+| **GitHub Actions** | `.github/workflows/` | Releases to GitHub Releases + ghcr.io |
+| **Gitea Actions** | `.gitea/workflows/` | Releases via Gitea API |
+
+### Running Locally with act
+
+```bash
+# Validate workflow files
+act --list -W .github/workflows/build-binaries.yml
+
+# Run a specific job
+act -j build push
+```
+
 ## Repository Structure
 
 ```
 .
 ├── .github/
 │   └── workflows/
-│       ├── build-env-image.yml
-│       └── build-binaries.yml
+│       ├── build-env-image.yml   # Build + push ghcr.io/binmgr/tor:build
+│       └── build-binaries.yml    # Build all 8 binaries + create release
 ├── .gitea/
 │   └── workflows/
-│       ├── build-env-image.yml
-│       └── build-binaries.yml
-├── LICENSE.md                 # License information
-└── README.md                  # This file
+│       ├── build-env-image.yml   # Build + push ghcr.io/binmgr/tor:build
+│       └── build-binaries.yml    # Build all 8 binaries + create release
+├── docker/
+│   └── Dockerfile.build          # Build environment (Alpine + cross-compilers)
+├── Dockerfile                    # Minimal runtime image (FROM scratch)
+├── LICENSE.md                    # License information
+└── README.md                     # This file
 ```
 
 ## Contributing
@@ -210,7 +211,7 @@ Contributions are welcome! Please feel free to submit issues and pull requests.
 
 Tor is licensed under the **BSD 3-Clause License**.
 
-Build scripts in this repository are licensed under the **MIT License**.
+Build scripts and CI/CD configurations in this repository are licensed under the **MIT License**.
 
 See [LICENSE.md](LICENSE.md) for full details.
 
