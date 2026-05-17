@@ -122,7 +122,7 @@ jobs:
               ;;
             freebsd-amd64)
               sudo apt-get install -y clang lld
-              wget -q https://download.freebsd.org/releases/amd64/14.0-RELEASE/base.txz
+              wget -q https://download.freebsd.org/releases/amd64/amd64/14.1-RELEASE/base.txz
               sudo mkdir -p /opt/freebsd && sudo tar xJf base.txz -C /opt/freebsd ./lib ./usr/lib ./usr/include
               export CC=clang CXX=clang++ AR=llvm-ar RANLIB=llvm-ranlib STRIP=llvm-strip
               export CROSS_PREFIX= HOST=x86_64-unknown-freebsd14 FREEBSD_SYSROOT=/opt/freebsd
@@ -131,7 +131,7 @@ jobs:
               ;;
             freebsd-arm64)
               sudo apt-get install -y clang lld
-              wget -q https://download.freebsd.org/releases/arm64/aarch64/14.0-RELEASE/base.txz
+              wget -q https://download.freebsd.org/releases/arm64/aarch64/14.1-RELEASE/base.txz
               sudo mkdir -p /opt/freebsd && sudo tar xJf base.txz -C /opt/freebsd ./lib ./usr/lib ./usr/include
               export CC=clang CXX=clang++ AR=llvm-ar RANLIB=llvm-ranlib STRIP=llvm-strip
               export CROSS_PREFIX= HOST=aarch64-unknown-freebsd14 FREEBSD_SYSROOT=/opt/freebsd
@@ -143,8 +143,13 @@ jobs:
           # Build zlib
           wget -q https://zlib.net/zlib-${ZLIB_VERSION}.tar.gz && tar xzf zlib-${ZLIB_VERSION}.tar.gz && cd zlib-${ZLIB_VERSION}
           if [ "${{ matrix.os }}" = "windows" ]; then
-            make -f win32/Makefile.gcc PREFIX=${CROSS_PREFIX} CC=${CC} AR=${AR} RANLIB=${RANLIB}
-            mkdir -p $DEPS_PREFIX/include $DEPS_PREFIX/lib && cp zlib.h zconf.h $DEPS_PREFIX/include/ && cp libz.a $DEPS_PREFIX/lib/
+            cmake -S . -B _build \
+              -DCMAKE_C_COMPILER="${CC}" \
+              -DCMAKE_SYSTEM_NAME=Windows \
+              -DCMAKE_INSTALL_PREFIX="$DEPS_PREFIX" \
+              -DBUILD_SHARED_LIBS=OFF
+            cmake --build _build -j$(nproc)
+            cmake --install _build
           else
             CHOST=${HOST} ./configure --prefix=$DEPS_PREFIX --static && make -j$(nproc) && make install
           fi
@@ -158,7 +163,7 @@ jobs:
             darwin-amd64) TARGET="darwin64-x86_64-cc" ;; darwin-arm64) TARGET="darwin64-arm64-cc" ;;
             freebsd-amd64) TARGET="BSD-x86_64" ;; freebsd-arm64) TARGET="BSD-generic64" ;;
           esac
-          ./Configure ${TARGET} --prefix=$DEPS_PREFIX --cross-compile-prefix=${CROSS_PREFIX} no-shared no-tests no-ui-console
+          ./Configure ${TARGET} --prefix=$DEPS_PREFIX no-shared no-tests no-ui-console
           make -j$(nproc) && make install_sw && cd ..
 
           # Build libevent
