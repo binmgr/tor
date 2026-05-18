@@ -152,6 +152,8 @@ if [ "${ZLIB_CMAKE}" = "1" ]; then
         -DBUILD_SHARED_LIBS=OFF
     cmake --build "_zbuild" -j"${NPROC}"
     cmake --install "_zbuild"
+    # cmake names the static lib libzlib.a; linker expects libz.a
+    ln -sf libzlib.a "${DEPS}/lib/libz.a"
 else
     cd "zlib-${ZLIB_VERSION}"
     CHOST="${HOST}" CC="${CC}" AR="${AR}" RANLIB="${RANLIB}" CFLAGS="${CFLAGS}" \
@@ -430,7 +432,7 @@ export RANLIB=x86_64-apple-darwin23-ranlib
 export STRIP=x86_64-apple-darwin23-strip
 export HOST=x86_64-apple-darwin23
 export CFLAGS="-I${DEPS}/include"
-export LDFLAGS="-L${DEPS}/lib -static"
+export LDFLAGS="-L${DEPS}/lib"
 export LIBS="-lzstd -llzma -lssl -lcrypto -levent -lz"
 export EXT=""
 export OSNAME=darwin
@@ -453,7 +455,7 @@ export RANLIB=aarch64-apple-darwin23-ranlib
 export STRIP=aarch64-apple-darwin23-strip
 export HOST=aarch64-apple-darwin23
 export CFLAGS="-I${DEPS}/include"
-export LDFLAGS="-L${DEPS}/lib -static"
+export LDFLAGS="-L${DEPS}/lib"
 export LIBS="-lzstd -llzma -lssl -lcrypto -levent -lz"
 export EXT=""
 export OSNAME=darwin
