@@ -162,9 +162,12 @@ every other dependency and all `-L` search paths point at `$deps/lib`.
 `--cross-compile-prefix` is **not** used; the `CC` environment variable points
 directly to the appropriate compiler wrapper.
 
-For Windows targets, `make build_libs` is used instead of `make` to build only
-the static libraries, avoiding the `windres` dependency required to compile the
-resource file for the OpenSSL command-line app (which is not needed).
+For Windows targets, `make build_libs` is used instead of `make`, and
+`make install_dev` is used instead of `make install_sw`. `install_sw` calls
+`build_modules` which requires `windres` (the Windows resource compiler) to
+compile `.rc` files for the OpenSSL CLI app — not present on the runner as plain
+`windres`. `install_dev` installs only headers and static libraries, which is all
+that is needed.
 
 ### libevent configure flags
 
@@ -217,12 +220,13 @@ Windows only: `--enable-static-libevent --enable-static-openssl --enable-static-
 
 macOS only: `--disable-gcc-hardening`
 
-Linux only: `--disable-tool-name-check`
+All targets: `--disable-tool-name-check`
 
-`--disable-tool-name-check` is required for Linux (zig) targets. Tor's configure
-probes the compiler with `-V` and `-qversion` to identify the toolchain. zig cc
-does not implement those flags and errors out, causing configure to fail with
-"We are cross compiling but could not find a properly named toolchain."
+`--disable-tool-name-check` is required for all cross-compilation targets. Tor's
+configure probes the compiler with `-V` and `-qversion` to identify the toolchain.
+None of the cross-compilers used here (zig cc, plain clang, osxcross clang)
+implement those flags, causing configure to fail with "We are cross compiling
+but could not find a properly named toolchain."
 
 Windows link extras in `LIBS`: `-lws2_32 -lcrypt32 -lgdi32 -liphlpapi`
 
