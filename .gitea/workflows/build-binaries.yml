@@ -83,11 +83,13 @@ jobs:
               wget -q "https://ziglang.org/download/${ZIG_VER}/zig-linux-x86_64-${ZIG_VER}.tar.xz"
               tar xJf "zig-linux-x86_64-${ZIG_VER}.tar.xz" -C "$CROSS_ROOT"
               export PATH="$CROSS_ROOT/zig-linux-x86_64-${ZIG_VER}:$CROSS_ROOT/bin:$PATH"
-              printf '#!/bin/sh\nexec zig cc  -target x86_64-linux-musl "$@"\n' > "$CROSS_ROOT/bin/x86_64-linux-musl-gcc"
-              printf '#!/bin/sh\nexec zig c++ -target x86_64-linux-musl "$@"\n' > "$CROSS_ROOT/bin/x86_64-linux-musl-g++"
-              printf '#!/bin/sh\nexec zig ar "$@"\n'                            > "$CROSS_ROOT/bin/x86_64-linux-musl-ar"
-              printf '#!/bin/sh\nexec zig ranlib "$@"\n'                        > "$CROSS_ROOT/bin/x86_64-linux-musl-ranlib"
-              printf '#!/bin/sh\nexec llvm-strip "$@"\n'                        > "$CROSS_ROOT/bin/x86_64-linux-musl-strip"
+              # Bake -static and -L into the wrapper so every invocation (including
+              # autoconf CC tests that do not receive LDFLAGS) resolves our static deps.
+              printf '#!/bin/sh\nexec zig cc  -target x86_64-linux-musl -static -L%s/lib "$@"\n' "$DEPS_PREFIX" > "$CROSS_ROOT/bin/x86_64-linux-musl-gcc"
+              printf '#!/bin/sh\nexec zig c++ -target x86_64-linux-musl -static -L%s/lib "$@"\n' "$DEPS_PREFIX" > "$CROSS_ROOT/bin/x86_64-linux-musl-g++"
+              printf '#!/bin/sh\nexec zig ar "$@"\n'                                               > "$CROSS_ROOT/bin/x86_64-linux-musl-ar"
+              printf '#!/bin/sh\nexec zig ranlib "$@"\n'                                           > "$CROSS_ROOT/bin/x86_64-linux-musl-ranlib"
+              printf '#!/bin/sh\nexec llvm-strip "$@"\n'                                           > "$CROSS_ROOT/bin/x86_64-linux-musl-strip"
               chmod +x "$CROSS_ROOT/bin/x86_64-linux-musl-"*
               export CC=x86_64-linux-musl-gcc CXX=x86_64-linux-musl-g++
               export AR=x86_64-linux-musl-ar RANLIB=x86_64-linux-musl-ranlib STRIP=x86_64-linux-musl-strip
@@ -99,11 +101,13 @@ jobs:
               wget -q "https://ziglang.org/download/${ZIG_VER}/zig-linux-x86_64-${ZIG_VER}.tar.xz"
               tar xJf "zig-linux-x86_64-${ZIG_VER}.tar.xz" -C "$CROSS_ROOT"
               export PATH="$CROSS_ROOT/zig-linux-x86_64-${ZIG_VER}:$CROSS_ROOT/bin:$PATH"
-              printf '#!/bin/sh\nexec zig cc  -target aarch64-linux-musl "$@"\n' > "$CROSS_ROOT/bin/aarch64-linux-musl-gcc"
-              printf '#!/bin/sh\nexec zig c++ -target aarch64-linux-musl "$@"\n' > "$CROSS_ROOT/bin/aarch64-linux-musl-g++"
-              printf '#!/bin/sh\nexec zig ar "$@"\n'                              > "$CROSS_ROOT/bin/aarch64-linux-musl-ar"
-              printf '#!/bin/sh\nexec zig ranlib "$@"\n'                          > "$CROSS_ROOT/bin/aarch64-linux-musl-ranlib"
-              printf '#!/bin/sh\nexec llvm-strip "$@"\n'                          > "$CROSS_ROOT/bin/aarch64-linux-musl-strip"
+              # Bake -static and -L into the wrapper so every invocation (including
+              # autoconf CC tests that do not receive LDFLAGS) resolves our static deps.
+              printf '#!/bin/sh\nexec zig cc  -target aarch64-linux-musl -static -L%s/lib "$@"\n' "$DEPS_PREFIX" > "$CROSS_ROOT/bin/aarch64-linux-musl-gcc"
+              printf '#!/bin/sh\nexec zig c++ -target aarch64-linux-musl -static -L%s/lib "$@"\n' "$DEPS_PREFIX" > "$CROSS_ROOT/bin/aarch64-linux-musl-g++"
+              printf '#!/bin/sh\nexec zig ar "$@"\n'                                                > "$CROSS_ROOT/bin/aarch64-linux-musl-ar"
+              printf '#!/bin/sh\nexec zig ranlib "$@"\n'                                            > "$CROSS_ROOT/bin/aarch64-linux-musl-ranlib"
+              printf '#!/bin/sh\nexec llvm-strip "$@"\n'                                            > "$CROSS_ROOT/bin/aarch64-linux-musl-strip"
               chmod +x "$CROSS_ROOT/bin/aarch64-linux-musl-"*
               export CC=aarch64-linux-musl-gcc CXX=aarch64-linux-musl-g++
               export AR=aarch64-linux-musl-ar RANLIB=aarch64-linux-musl-ranlib STRIP=aarch64-linux-musl-strip
