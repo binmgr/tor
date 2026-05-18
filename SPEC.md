@@ -146,8 +146,13 @@ No host-installed libraries are used.
 ### OpenSSL configure flags
 
 ```
---prefix=<deps> --libdir=lib no-shared no-tests no-ui-console
+--prefix=<deps> --libdir=lib no-shared no-tests no-ui-console [no-asm]
 ```
+
+`no-asm` is added for Windows arm64 only. The `mingw64` OpenSSL target selects
+x86_64 assembly routines; those files contain x86-specific inline asm constraints
+incompatible with `aarch64-w64-mingw32-clang`. `no-asm` forces portable C
+implementations for all crypto primitives.
 
 `--libdir=lib` is required: OpenSSL 3.x with 64-bit targets (e.g. `linux-x86_64`,
 `linux-aarch64`) defaults to `lib64` due to `multilib=64` in its configuration.
@@ -156,6 +161,10 @@ every other dependency and all `-L` search paths point at `$deps/lib`.
 
 `--cross-compile-prefix` is **not** used; the `CC` environment variable points
 directly to the appropriate compiler wrapper.
+
+For Windows targets, `make build_libs` is used instead of `make` to build only
+the static libraries, avoiding the `windres` dependency required to compile the
+resource file for the OpenSSL command-line app (which is not needed).
 
 ### libevent configure flags
 
@@ -207,6 +216,13 @@ install to prevent accidental dynamic linking.
 Windows only: `--enable-static-libevent --enable-static-openssl --enable-static-zlib`
 
 macOS only: `--disable-gcc-hardening`
+
+Linux only: `--disable-tool-name-check`
+
+`--disable-tool-name-check` is required for Linux (zig) targets. Tor's configure
+probes the compiler with `-V` and `-qversion` to identify the toolchain. zig cc
+does not implement those flags and errors out, causing configure to fail with
+"We are cross compiling but could not find a properly named toolchain."
 
 Windows link extras in `LIBS`: `-lws2_32 -lcrypt32 -lgdi32 -liphlpapi`
 

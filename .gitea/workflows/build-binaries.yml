@@ -74,6 +74,8 @@ jobs:
           export CROSS_ROOT DEPS_PREFIX BUILD_DIR
           export PKG_CONFIG_PATH="$DEPS_PREFIX/lib/pkgconfig"
           export CFLAGS="" LDFLAGS=""
+          OPENSSL_EXTRA=""
+          OPENSSL_MAKE_TARGET=""
 
           # Toolchain setup
           case "${{ matrix.os }}-${{ matrix.arch }}" in
@@ -118,6 +120,7 @@ jobs:
               export CC=x86_64-w64-mingw32-gcc CXX=x86_64-w64-mingw32-g++
               export AR=x86_64-w64-mingw32-ar RANLIB=x86_64-w64-mingw32-ranlib STRIP=x86_64-w64-mingw32-strip
               export HOST=x86_64-w64-mingw32 OPENSSL_TARGET=mingw64
+              OPENSSL_MAKE_TARGET="build_libs"
               ;;
             windows-arm64)
               wget -q "https://github.com/mstorsjo/llvm-mingw/releases/download/20241217/llvm-mingw-20241217-ucrt-ubuntu-20.04-x86_64.tar.xz"
@@ -126,6 +129,9 @@ jobs:
               export CC=aarch64-w64-mingw32-clang CXX=aarch64-w64-mingw32-clang++
               export AR=aarch64-w64-mingw32-ar RANLIB=aarch64-w64-mingw32-ranlib STRIP=aarch64-w64-mingw32-strip
               export HOST=aarch64-w64-mingw32 OPENSSL_TARGET=mingw64
+              # mingw64 target selects x86_64 ASM; aarch64 clang cannot assemble it
+              OPENSSL_EXTRA="no-asm"
+              OPENSSL_MAKE_TARGET="build_libs"
               ;;
             darwin-amd64)
               sudo apt-get install -y clang libxml2-dev llvm-dev uuid-dev libssl-dev
@@ -152,7 +158,7 @@ jobs:
               export HOST=aarch64-apple-darwin23 OPENSSL_TARGET=darwin64-arm64-cc
               ;;
             freebsd-amd64)
-              sudo apt-get install -y clang lld
+              sudo apt-get install -y clang lld llvm
               wget -q "https://download.freebsd.org/releases/amd64/amd64/14.3-RELEASE/base.txz"
               sudo mkdir -p /opt/freebsd
               sudo tar xJf base.txz -C /opt/freebsd ./lib ./usr/lib ./usr/include
@@ -162,7 +168,7 @@ jobs:
               export LDFLAGS="--sysroot=/opt/freebsd --target=x86_64-unknown-freebsd14 -fuse-ld=lld"
               ;;
             freebsd-arm64)
-              sudo apt-get install -y clang lld
+              sudo apt-get install -y clang lld llvm
               wget -q "https://download.freebsd.org/releases/arm64/aarch64/14.3-RELEASE/base.txz"
               sudo mkdir -p /opt/freebsd
               sudo tar xJf base.txz -C /opt/freebsd ./lib ./usr/lib ./usr/include
@@ -196,8 +202,8 @@ jobs:
           wget -q "https://www.openssl.org/source/openssl-${OPENSSL_VERSION}.tar.gz"
           tar xzf "openssl-${OPENSSL_VERSION}.tar.gz"
           cd "openssl-${OPENSSL_VERSION}"
-          ./Configure "${OPENSSL_TARGET}" --prefix="$DEPS_PREFIX" --libdir=lib no-shared no-tests no-ui-console
-          make -j$(nproc)
+          ./Configure "${OPENSSL_TARGET}" --prefix="$DEPS_PREFIX" --libdir=lib no-shared no-tests no-ui-console ${OPENSSL_EXTRA}
+          make -j$(nproc) ${OPENSSL_MAKE_TARGET}
           make install_sw
           cd "$BUILD_DIR"
 
@@ -249,6 +255,8 @@ jobs:
 
           [ "${{ matrix.os }}" = "windows" ] && CONFIGURE_FLAGS="$CONFIGURE_FLAGS --enable-static-libevent --enable-static-openssl --enable-static-zlib"
           [ "${{ matrix.os }}" = "darwin" ]  && CONFIGURE_FLAGS="$CONFIGURE_FLAGS --disable-gcc-hardening"
+          # zig cc does not respond to -V/-qversion version probes; skip Tor's toolchain name check
+          [ "${{ matrix.os }}" = "linux" ]   && CONFIGURE_FLAGS="$CONFIGURE_FLAGS --disable-tool-name-check"
 
           export CFLAGS="-I$DEPS_PREFIX/include $CFLAGS"
           export LDFLAGS="-L$DEPS_PREFIX/lib $LDFLAGS -static"
