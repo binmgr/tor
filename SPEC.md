@@ -180,11 +180,15 @@ OPENSSL_CFLAGS/OPENSSL_LIBS pointing to deps prefix
 ### zstd build
 
 ```
-make lib-release CC=<cross-cc> AR=<cross-ar> RANLIB=<cross-ranlib>
+make -C lib libzstd.a CC=<cross-cc> AR=<cross-ar> RANLIB=<cross-ranlib>
+make -C lib install-static install-includes PREFIX=<deps>
 ```
 
-Shared library output (`libzstd.so*`, `libzstd.dylib*`) is removed after
-install to prevent accidental dynamic linking.
+`lib-release` is avoided because it also builds the shared library, which fails
+for cross-targets: osxcross clang cannot produce Linux `.so` files, and
+mingw-w64 produces a `.dll` that cannot be installed by a Makefile expecting
+plain `zstd` (no `.exe`). Building only `libzstd.a` from `lib/` and installing
+with `install-static install-includes` produces only what Tor needs.
 
 ### xz/liblzma configure flags
 

@@ -231,9 +231,12 @@ jobs:
           wget -q "https://github.com/facebook/zstd/releases/download/v${ZSTD_VERSION}/zstd-${ZSTD_VERSION}.tar.gz"
           tar xzf "zstd-${ZSTD_VERSION}.tar.gz"
           cd "zstd-${ZSTD_VERSION}"
-          make -j$(nproc) lib-release CC="${CC}" AR="${AR}" RANLIB="${RANLIB}" PREFIX="$DEPS_PREFIX"
-          make install PREFIX="$DEPS_PREFIX"
-          rm -f "$DEPS_PREFIX/lib/libzstd.so"* "$DEPS_PREFIX/lib/libzstd.dylib"* 2>/dev/null || true
+          # Build static lib only (-C lib libzstd.a); lib-release also builds the shared lib
+          # which fails for cross-targets (osxcross can't link .so on Linux, mingw produces
+          # .dll but installer looks for .exe). install-static+install-includes skips the
+          # zstd CLI binary install (fails for cross-compiled PE executables).
+          make -j$(nproc) CC="${CC}" AR="${AR}" RANLIB="${RANLIB}" -C lib libzstd.a
+          make -C lib install-static install-includes PREFIX="$DEPS_PREFIX"
           cd "$BUILD_DIR"
 
           # Build xz/liblzma
