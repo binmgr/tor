@@ -146,8 +146,13 @@ No host-installed libraries are used.
 ### OpenSSL configure flags
 
 ```
---prefix=<deps> no-shared no-tests no-ui-console
+--prefix=<deps> --libdir=lib no-shared no-tests no-ui-console
 ```
+
+`--libdir=lib` is required: OpenSSL 3.x with 64-bit targets (e.g. `linux-x86_64`,
+`linux-aarch64`) defaults to `lib64` due to `multilib=64` in its configuration.
+Without this flag, `libssl.a` and `libcrypto.a` land in `$deps/lib64` while
+every other dependency and all `-L` search paths point at `$deps/lib`.
 
 `--cross-compile-prefix` is **not** used; the `CC` environment variable points
 directly to the appropriate compiler wrapper.

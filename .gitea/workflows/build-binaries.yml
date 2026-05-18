@@ -196,7 +196,7 @@ jobs:
           wget -q "https://www.openssl.org/source/openssl-${OPENSSL_VERSION}.tar.gz"
           tar xzf "openssl-${OPENSSL_VERSION}.tar.gz"
           cd "openssl-${OPENSSL_VERSION}"
-          ./Configure "${OPENSSL_TARGET}" --prefix="$DEPS_PREFIX" no-shared no-tests no-ui-console
+          ./Configure "${OPENSSL_TARGET}" --prefix="$DEPS_PREFIX" --libdir=lib no-shared no-tests no-ui-console
           make -j$(nproc)
           make install_sw
           cd "$BUILD_DIR"
