@@ -30,7 +30,7 @@ RUN apt-get update -qq && apt-get install -y --no-install-recommends \
     build-essential cmake pkg-config git curl wget \
     autoconf automake libtool xz-utils bzip2 ca-certificates perl python3 \
     clang lld llvm \
-    libxml2-dev uuid-dev libssl-dev \
+    libxml2-dev uuid-dev libssl-dev zlib1g-dev \
     mingw-w64 \
     && rm -rf /var/lib/apt/lists/*
 
