@@ -54,7 +54,7 @@ sha256sum -c checksums.txt
 |---------|---------|---------|
 | **OpenSSL** | 3.2.1 | TLS/SSL cryptographic library |
 | **libevent** | 2.1.12-stable | Event notification library |
-| **zlib** | 1.3.1 | Compression support |
+| **zlib** | 1.3.2 | Compression support |
 | **zstd** | 1.5.5 | Zstandard compression (faster) |
 | **liblzma** | 5.4.5 | LZMA compression support |
 
