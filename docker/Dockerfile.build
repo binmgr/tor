@@ -1,131 +1,522 @@
 # =============================================================================
 # Tor Build Environment
+# All 8 cross-compilation toolchains + pre-built dependency libraries.
+# Tor source is NOT included — it is downloaded at CI build time.
 # =============================================================================
-FROM alpine:latest
+FROM ubuntu:22.04
 
-# Install build tools and ALL static libraries for native builds
-RUN apk add --no-cache \
-    build-base curl wget git autoconf automake libtool pkgconf zig llvm20 \
-    linux-headers tar xz bzip2 ca-certificates perl \
-    # Static libraries (native amd64)
-    zlib-static openssl-libs-static libevent-static zstd-static xz-static \
-    # Dev headers
-    zlib-dev openssl-dev libevent-dev zstd-dev xz-dev
+ENV DEBIAN_FRONTEND=noninteractive
 
-# For cross-compile: need to build deps from source
-ENV PREFIX_ARM64=/opt/deps/arm64
-ENV CROSS=/opt/cross
+# ---------------------------------------------------------------------------
+# Version pins
+# ---------------------------------------------------------------------------
+ENV ZIG_VERSION=0.14.0 \
+    LLVM_MINGW_VERSION=20241217 \
+    FREEBSD_VERSION=14.3-RELEASE \
+    OPENSSL_VERSION=3.2.1 \
+    LIBEVENT_VERSION=2.1.12-stable \
+    ZLIB_VERSION=1.3.2 \
+    ZSTD_VERSION=1.5.5 \
+    XZ_VERSION=5.4.5
 
-RUN mkdir -p ${PREFIX_ARM64} /build /opt/cross
+# ---------------------------------------------------------------------------
+# Base build tools
+# clang/lld/llvm  — FreeBSD cross-compile + osxcross host compiler
+# mingw-w64       — Windows amd64 (GCC-based)
+# libxml2-dev + uuid-dev + libssl-dev — required by osxcross build.sh
+# cmake           — zlib Windows cross-build
+# ---------------------------------------------------------------------------
+RUN apt-get update -qq && apt-get install -y --no-install-recommends \
+    build-essential cmake pkg-config git curl wget \
+    autoconf automake libtool xz-utils bzip2 ca-certificates perl python3 \
+    clang lld llvm \
+    libxml2-dev uuid-dev libssl-dev \
+    mingw-w64 \
+    && rm -rf /var/lib/apt/lists/*
 
-WORKDIR /build
+# ---------------------------------------------------------------------------
+# Zig 0.14.0  (linux-amd64 and linux-arm64 cross-compiler)
+# ---------------------------------------------------------------------------
+RUN wget -q "https://ziglang.org/download/${ZIG_VERSION}/zig-linux-x86_64-${ZIG_VERSION}.tar.xz" \
+        -O /tmp/zig.tar.xz && \
+    mkdir -p /opt/zig && \
+    tar xJf /tmp/zig.tar.xz -C /opt/zig --strip-components=1 && \
+    rm /tmp/zig.tar.xz
 
-# Provide a stable arm64-musl cross toolchain via Zig wrappers.
-RUN mkdir -p ${CROSS}/bin && \
-    printf '#!/bin/sh\nexec zig cc -target aarch64-linux-musl "$@"\n' > ${CROSS}/bin/aarch64-linux-musl-gcc && \
-    printf '#!/bin/sh\nexec zig c++ -target aarch64-linux-musl "$@"\n' > ${CROSS}/bin/aarch64-linux-musl-g++ && \
-    printf '#!/bin/sh\nexec zig ar "$@"\n' > ${CROSS}/bin/aarch64-linux-musl-ar && \
-    printf '#!/bin/sh\nexec zig ranlib "$@"\n' > ${CROSS}/bin/aarch64-linux-musl-ranlib && \
-    printf '#!/bin/sh\nexec llvm20-strip "$@"\n' > ${CROSS}/bin/aarch64-linux-musl-strip && \
-    chmod +x ${CROSS}/bin/aarch64-linux-musl-*
+# ---------------------------------------------------------------------------
+# llvm-mingw  (Windows arm64 — clang-based UCRT cross-compiler)
+# ---------------------------------------------------------------------------
+RUN wget -q "https://github.com/mstorsjo/llvm-mingw/releases/download/${LLVM_MINGW_VERSION}/llvm-mingw-${LLVM_MINGW_VERSION}-ucrt-ubuntu-20.04-x86_64.tar.xz" \
+        -O /tmp/llvm-mingw.tar.xz && \
+    mkdir -p /opt/llvm-mingw && \
+    tar xJf /tmp/llvm-mingw.tar.xz -C /opt/llvm-mingw --strip-components=1 && \
+    rm /tmp/llvm-mingw.tar.xz
 
-ENV PATH="${CROSS}/bin:${PATH}"
+# ---------------------------------------------------------------------------
+# osxcross  (macOS amd64 + arm64 cross-compiler, MacOSX14.0 SDK)
+# ---------------------------------------------------------------------------
+RUN git clone --depth 1 https://github.com/tpoechtrager/osxcross.git /opt/osxcross && \
+    wget -q "https://github.com/joseluisq/macosx-sdks/releases/download/14.0/MacOSX14.0.sdk.tar.xz" \
+        -O /opt/osxcross/tarballs/MacOSX14.0.sdk.tar.xz && \
+    cd /opt/osxcross && \
+    UNATTENDED=1 ./build.sh && \
+    rm -rf /opt/osxcross/build
 
-# Download sources for ARM64 cross-compile
-ARG ZLIB_VERSION=1.3.2
-ARG OPENSSL_VERSION=3.2.1
-ARG LIBEVENT_VERSION=2.1.12-stable
-ARG ZSTD_VERSION=1.5.5
-ARG XZ_VERSION=5.4.5
+# ---------------------------------------------------------------------------
+# FreeBSD 14.3-RELEASE sysroots  (amd64 and arm64)
+# Extract only headers + libraries; no kernel or base userland needed.
+# ---------------------------------------------------------------------------
+RUN mkdir -p /opt/freebsd/amd64 /opt/freebsd/arm64 && \
+    wget -q "https://download.freebsd.org/releases/amd64/amd64/${FREEBSD_VERSION}/base.txz" \
+        -O /tmp/fbsd-amd64.txz && \
+    tar xJf /tmp/fbsd-amd64.txz -C /opt/freebsd/amd64 ./lib ./usr/lib ./usr/include && \
+    rm /tmp/fbsd-amd64.txz && \
+    wget -q "https://download.freebsd.org/releases/arm64/aarch64/${FREEBSD_VERSION}/base.txz" \
+        -O /tmp/fbsd-arm64.txz && \
+    tar xJf /tmp/fbsd-arm64.txz -C /opt/freebsd/arm64 ./lib ./usr/lib ./usr/include && \
+    rm /tmp/fbsd-arm64.txz
 
-RUN wget -q "https://zlib.net/zlib-${ZLIB_VERSION}.tar.gz" && \
+# ---------------------------------------------------------------------------
+# Zig wrapper scripts for linux-musl cross-compile
+#
+# -static and -L<deps>/lib are baked into the CC/CXX wrappers so that
+# autoconf's "C compiler works" test (which only passes CFLAGS, never
+# LDFLAGS) can resolve static libraries.  Without the -L path zig's
+# paths_first strategy has no search dirs and fails on any -l flag.
+# ---------------------------------------------------------------------------
+RUN mkdir -p /opt/cross/bin && \
+    printf '#!/bin/sh\nexec /opt/zig/zig cc  -target x86_64-linux-musl  -static -L/opt/deps/linux-amd64/lib  "$@"\n' > /opt/cross/bin/x86_64-linux-musl-gcc  && \
+    printf '#!/bin/sh\nexec /opt/zig/zig c++ -target x86_64-linux-musl  -static -L/opt/deps/linux-amd64/lib  "$@"\n' > /opt/cross/bin/x86_64-linux-musl-g++  && \
+    printf '#!/bin/sh\nexec /opt/zig/zig ar "$@"\n'     > /opt/cross/bin/x86_64-linux-musl-ar     && \
+    printf '#!/bin/sh\nexec /opt/zig/zig ranlib "$@"\n' > /opt/cross/bin/x86_64-linux-musl-ranlib  && \
+    printf '#!/bin/sh\nexec llvm-strip "$@"\n'          > /opt/cross/bin/x86_64-linux-musl-strip   && \
+    printf '#!/bin/sh\nexec /opt/zig/zig cc  -target aarch64-linux-musl -static -L/opt/deps/linux-arm64/lib  "$@"\n' > /opt/cross/bin/aarch64-linux-musl-gcc  && \
+    printf '#!/bin/sh\nexec /opt/zig/zig c++ -target aarch64-linux-musl -static -L/opt/deps/linux-arm64/lib  "$@"\n' > /opt/cross/bin/aarch64-linux-musl-g++  && \
+    printf '#!/bin/sh\nexec /opt/zig/zig ar "$@"\n'     > /opt/cross/bin/aarch64-linux-musl-ar     && \
+    printf '#!/bin/sh\nexec /opt/zig/zig ranlib "$@"\n' > /opt/cross/bin/aarch64-linux-musl-ranlib  && \
+    printf '#!/bin/sh\nexec llvm-strip "$@"\n'          > /opt/cross/bin/aarch64-linux-musl-strip   && \
+    chmod +x /opt/cross/bin/*
+
+ENV PATH="/opt/cross/bin:/opt/zig:/opt/llvm-mingw/bin:/opt/osxcross/target/bin:${PATH}"
+
+# ---------------------------------------------------------------------------
+# Download dep sources (reused for all 8 targets)
+# ---------------------------------------------------------------------------
+RUN mkdir -p /opt/src && cd /opt/src && \
+    wget -q "https://zlib.net/zlib-${ZLIB_VERSION}.tar.gz" && \
     wget -q "https://www.openssl.org/source/openssl-${OPENSSL_VERSION}.tar.gz" && \
     wget -q "https://github.com/libevent/libevent/releases/download/release-${LIBEVENT_VERSION}/libevent-${LIBEVENT_VERSION}.tar.gz" && \
     wget -q "https://github.com/facebook/zstd/releases/download/v${ZSTD_VERSION}/zstd-${ZSTD_VERSION}.tar.gz" && \
     wget -q "https://github.com/tukaani-project/xz/releases/download/v${XZ_VERSION}/xz-${XZ_VERSION}.tar.gz"
 
-# Build ARM64 dependencies
-RUN tar xzf zlib-*.tar.gz && cd zlib-*/ && \
-    CHOST=aarch64-linux-musl CC=aarch64-linux-musl-gcc AR=aarch64-linux-musl-ar RANLIB=aarch64-linux-musl-ranlib \
-    ./configure --prefix=${PREFIX_ARM64} --static && \
-    make -j$(nproc) && make install && cd .. && rm -rf zlib-*/
-
-RUN tar xzf openssl-*.tar.gz && cd openssl-*/ && \
-    ./Configure linux-aarch64 --prefix=${PREFIX_ARM64} --libdir=lib \
-        --cross-compile-prefix=aarch64-linux-musl- no-shared no-tests no-ui-console && \
-    make -j$(nproc) && make install_sw && cd .. && rm -rf openssl-*/
-
-RUN tar xzf libevent-*.tar.gz && cd libevent-*/ && \
-    ./configure --prefix=${PREFIX_ARM64} --host=aarch64-linux-musl \
-        --enable-static --disable-shared --disable-samples --disable-libevent-regress \
-        CFLAGS="-I${PREFIX_ARM64}/include" LDFLAGS="-L${PREFIX_ARM64}/lib" \
-        OPENSSL_CFLAGS="-I${PREFIX_ARM64}/include" OPENSSL_LIBS="-L${PREFIX_ARM64}/lib -lssl -lcrypto" && \
-    make -j$(nproc) && make install && cd .. && rm -rf libevent-*/
-
-RUN tar xzf zstd-*.tar.gz && cd zstd-*/ && \
-    make -j$(nproc) lib-release CC=aarch64-linux-musl-gcc AR=aarch64-linux-musl-ar \
-        RANLIB=aarch64-linux-musl-ranlib PREFIX=${PREFIX_ARM64} && \
-    make install PREFIX=${PREFIX_ARM64} && \
-    rm -f ${PREFIX_ARM64}/lib/libzstd.so* && cd .. && rm -rf zstd-*/
-
-RUN tar xzf xz-*.tar.gz && cd xz-*/ && \
-    ./configure --prefix=${PREFIX_ARM64} --host=aarch64-linux-musl \
-        --enable-static --disable-shared --disable-xz --disable-xzdec \
-        --disable-lzmadec --disable-lzmainfo --disable-scripts --disable-doc && \
-    make -j$(nproc) && make install && cd .. && rm -rf xz-*/
-
-RUN rm -rf /build/*
-
-# Build script
-COPY <<'EOF' /usr/local/bin/build-tor
+# ---------------------------------------------------------------------------
+# dep-build helper script
+#
+# Called as:  /opt/build-deps.sh <target>
+# Env vars that must be exported before calling:
+#   CC, CXX, AR, RANLIB, HOST, OPENSSL_TARGET
+#   CFLAGS, LDFLAGS         (empty or sysroot flags for freebsd)
+#   ZLIB_CMAKE              (set to "1" for windows cmake path)
+#   OPENSSL_EXTRA           (e.g. "no-asm" for windows-arm64)
+#   OPENSSL_MAKE_TARGET     (e.g. "build_libs" for windows)
+#   OPENSSL_INSTALL_TARGET  (e.g. "install_dev" for windows; default install_sw)
+# ---------------------------------------------------------------------------
+COPY <<'BUILDSCRIPT' /opt/build-deps.sh
 #!/bin/sh
-set -e
-ARCH="${1:-amd64}"
-TOR_VERSION="${2:-}"
+set -eu
 
-case "$ARCH" in
-    amd64)
-        CC=gcc; STRIP=strip; HOST=""
-        CFLAGS="-I/usr/include -static"
-        LDFLAGS="-L/usr/lib -static"
-        PKG_CONFIG_PATH="/usr/lib/pkgconfig"
-        LIBEVENT_DIR="/usr"; OPENSSL_DIR="/usr"; ZLIB_DIR="/usr"
-        ;;
-    arm64)
-        CC=aarch64-linux-musl-gcc; STRIP=aarch64-linux-musl-strip; HOST="--host=aarch64-linux-musl"
-        PREFIX=/opt/deps/arm64
-        CFLAGS="-I${PREFIX}/include -static"
-        LDFLAGS="-L${PREFIX}/lib -static"
-        PKG_CONFIG_PATH="${PREFIX}/lib/pkgconfig"
-        LIBEVENT_DIR="${PREFIX}"; OPENSSL_DIR="${PREFIX}"; ZLIB_DIR="${PREFIX}"
-        ;;
-    *) echo "Unknown: $ARCH"; exit 1 ;;
-esac
+TARGET="${1:?need target}"
+DEPS="/opt/deps/${TARGET}"
+SRCDIR=/opt/src
+NPROC=$(nproc 2>/dev/null || echo 4)
 
-[ -z "$TOR_VERSION" ] && TOR_VERSION=$(wget -qO- https://dist.torproject.org/ | grep -oE 'tor-[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+' | sed 's/tor-//' | sort -V | tail -1)
+: "${CC:?}" "${AR:?}" "${RANLIB:?}" "${HOST:?}" "${OPENSSL_TARGET:?}"
+: "${CFLAGS:=}" "${LDFLAGS:=}"
+: "${ZLIB_CMAKE:=0}"
+: "${OPENSSL_EXTRA:=}"
+: "${OPENSSL_MAKE_TARGET:=}"
+: "${OPENSSL_INSTALL_TARGET:=install_sw}"
 
-echo "Building Tor ${TOR_VERSION} for ${ARCH}..."
-cd /build
-wget -q "https://dist.torproject.org/tor-${TOR_VERSION}.tar.gz"
-tar xzf tor-${TOR_VERSION}.tar.gz && cd tor-${TOR_VERSION}
+mkdir -p "${DEPS}"
+BUILD="$(mktemp -d /tmp/depbuild-XXXXXX)"
+trap 'rm -rf "${BUILD}"' EXIT
+cd "${BUILD}"
 
-export CC CFLAGS LDFLAGS PKG_CONFIG_PATH
+# --- zlib ---
+tar xzf "${SRCDIR}/zlib-${ZLIB_VERSION}.tar.gz"
+if [ "${ZLIB_CMAKE}" = "1" ]; then
+    cmake -S "zlib-${ZLIB_VERSION}" -B "_zbuild" \
+        -DCMAKE_C_COMPILER="${CC}" \
+        -DCMAKE_SYSTEM_NAME=Windows \
+        -DCMAKE_INSTALL_PREFIX="${DEPS}" \
+        -DBUILD_SHARED_LIBS=OFF
+    cmake --build "_zbuild" -j"${NPROC}"
+    cmake --install "_zbuild"
+else
+    cd "zlib-${ZLIB_VERSION}"
+    CHOST="${HOST}" CC="${CC}" AR="${AR}" RANLIB="${RANLIB}" CFLAGS="${CFLAGS}" \
+        ./configure --prefix="${DEPS}" --static
+    make -j"${NPROC}"
+    make install
+    cd "${BUILD}"
+fi
+rm -rf "zlib-${ZLIB_VERSION}" "_zbuild" 2>/dev/null || true
+
+# --- OpenSSL ---
+tar xzf "${SRCDIR}/openssl-${OPENSSL_VERSION}.tar.gz"
+cd "openssl-${OPENSSL_VERSION}"
+# shellcheck disable=SC2086
+./Configure "${OPENSSL_TARGET}" --prefix="${DEPS}" --libdir=lib \
+    no-shared no-tests no-ui-console ${OPENSSL_EXTRA}
+# shellcheck disable=SC2086
+make -j"${NPROC}" ${OPENSSL_MAKE_TARGET}
+make ${OPENSSL_INSTALL_TARGET}
+cd "${BUILD}"
+rm -rf "openssl-${OPENSSL_VERSION}"
+
+# --- libevent ---
+tar xzf "${SRCDIR}/libevent-${LIBEVENT_VERSION}.tar.gz"
+cd "libevent-${LIBEVENT_VERSION}"
+./configure --prefix="${DEPS}" --host="${HOST}" \
+    --enable-static --disable-shared --disable-samples --disable-libevent-regress \
+    CFLAGS="-I${DEPS}/include ${CFLAGS}" \
+    LDFLAGS="-L${DEPS}/lib ${LDFLAGS}" \
+    OPENSSL_CFLAGS="-I${DEPS}/include" \
+    OPENSSL_LIBS="-L${DEPS}/lib -lssl -lcrypto"
+make -j"${NPROC}"
+make install
+cd "${BUILD}"
+rm -rf "libevent-${LIBEVENT_VERSION}"
+
+# --- zstd ---
+# Build static lib only; lib-release also builds the shared library which
+# fails for cross-targets (osxcross can't produce .so on Linux, mingw
+# produces .dll but the install Makefile looks for plain "zstd" not .exe).
+# install-static + install-includes skips the CLI binary entirely.
+tar xzf "${SRCDIR}/zstd-${ZSTD_VERSION}.tar.gz"
+cd "zstd-${ZSTD_VERSION}"
+make -j"${NPROC}" CC="${CC}" AR="${AR}" RANLIB="${RANLIB}" \
+    MOREFLAGS="${CFLAGS}" -C lib libzstd.a
+make -C lib install-static install-includes PREFIX="${DEPS}"
+cd "${BUILD}"
+rm -rf "zstd-${ZSTD_VERSION}"
+
+# --- xz/liblzma ---
+tar xzf "${SRCDIR}/xz-${XZ_VERSION}.tar.gz"
+cd "xz-${XZ_VERSION}"
+./configure --prefix="${DEPS}" --host="${HOST}" \
+    --enable-static --disable-shared \
+    --disable-xz --disable-xzdec --disable-lzmadec --disable-lzmainfo \
+    --disable-scripts --disable-doc
+make -j"${NPROC}"
+make install
+cd "${BUILD}"
+rm -rf "xz-${XZ_VERSION}"
+
+echo "=== deps for ${TARGET} done ==="
+BUILDSCRIPT
+
+RUN chmod +x /opt/build-deps.sh
+
+# ===========================================================================
+# Build dependencies for each target
+# Each target gets its own layer for Docker cache granularity.
+# ===========================================================================
+
+# --- linux-amd64 ---
+RUN sh -c ' \
+    export CC=x86_64-linux-musl-gcc CXX=x86_64-linux-musl-g++ \
+           AR=x86_64-linux-musl-ar  RANLIB=x86_64-linux-musl-ranlib \
+           HOST=x86_64-linux-musl   OPENSSL_TARGET=linux-x86_64 \
+           CFLAGS=""                 LDFLAGS="" \
+           ZLIB_CMAKE=0             OPENSSL_EXTRA="" \
+           OPENSSL_MAKE_TARGET=""   OPENSSL_INSTALL_TARGET=install_sw; \
+    /opt/build-deps.sh linux-amd64 \
+    '
+
+# --- linux-arm64 ---
+RUN sh -c ' \
+    export CC=aarch64-linux-musl-gcc CXX=aarch64-linux-musl-g++ \
+           AR=aarch64-linux-musl-ar  RANLIB=aarch64-linux-musl-ranlib \
+           HOST=aarch64-linux-musl   OPENSSL_TARGET=linux-aarch64 \
+           CFLAGS=""                  LDFLAGS="" \
+           ZLIB_CMAKE=0              OPENSSL_EXTRA="" \
+           OPENSSL_MAKE_TARGET=""    OPENSSL_INSTALL_TARGET=install_sw; \
+    /opt/build-deps.sh linux-arm64 \
+    '
+
+# --- windows-amd64 ---
+# install_dev: headers + static libs only; avoids windres (needed for CLI app/modules)
+RUN sh -c ' \
+    export CC=x86_64-w64-mingw32-gcc CXX=x86_64-w64-mingw32-g++ \
+           AR=x86_64-w64-mingw32-ar  RANLIB=x86_64-w64-mingw32-ranlib \
+           HOST=x86_64-w64-mingw32   OPENSSL_TARGET=mingw64 \
+           CFLAGS=""                  LDFLAGS="" \
+           ZLIB_CMAKE=1              OPENSSL_EXTRA="" \
+           OPENSSL_MAKE_TARGET=build_libs OPENSSL_INSTALL_TARGET=install_dev; \
+    /opt/build-deps.sh windows-amd64 \
+    '
+
+# --- windows-arm64 ---
+# no-asm: mingw64 OpenSSL target selects x86_64 ASM files incompatible with aarch64 clang
+# install_dev: same reason as amd64 (no windres on the runner)
+RUN sh -c ' \
+    export CC=aarch64-w64-mingw32-clang CXX=aarch64-w64-mingw32-clang++ \
+           AR=aarch64-w64-mingw32-ar    RANLIB=aarch64-w64-mingw32-ranlib \
+           HOST=aarch64-w64-mingw32     OPENSSL_TARGET=mingw64 \
+           CFLAGS=""                     LDFLAGS="" \
+           ZLIB_CMAKE=1                 OPENSSL_EXTRA=no-asm \
+           OPENSSL_MAKE_TARGET=build_libs OPENSSL_INSTALL_TARGET=install_dev; \
+    /opt/build-deps.sh windows-arm64 \
+    '
+
+# --- darwin-amd64 ---
+RUN sh -c ' \
+    export CC=x86_64-apple-darwin23-clang CXX=x86_64-apple-darwin23-clang++ \
+           AR=x86_64-apple-darwin23-ar    RANLIB=x86_64-apple-darwin23-ranlib \
+           HOST=x86_64-apple-darwin23     OPENSSL_TARGET=darwin64-x86_64-cc \
+           CFLAGS=""                       LDFLAGS="" \
+           ZLIB_CMAKE=0                   OPENSSL_EXTRA="" \
+           OPENSSL_MAKE_TARGET=""         OPENSSL_INSTALL_TARGET=install_sw; \
+    /opt/build-deps.sh darwin-amd64 \
+    '
+
+# --- darwin-arm64 ---
+RUN sh -c ' \
+    export CC=aarch64-apple-darwin23-clang CXX=aarch64-apple-darwin23-clang++ \
+           AR=aarch64-apple-darwin23-ar    RANLIB=aarch64-apple-darwin23-ranlib \
+           HOST=aarch64-apple-darwin23     OPENSSL_TARGET=darwin64-arm64-cc \
+           CFLAGS=""                        LDFLAGS="" \
+           ZLIB_CMAKE=0                    OPENSSL_EXTRA="" \
+           OPENSSL_MAKE_TARGET=""          OPENSSL_INSTALL_TARGET=install_sw; \
+    /opt/build-deps.sh darwin-arm64 \
+    '
+
+# --- freebsd-amd64 ---
+# Plain clang with --target + --sysroot in CFLAGS/LDFLAGS.
+# lld is required for FreeBSD ELF linking (-fuse-ld=lld in LDFLAGS).
+RUN sh -c ' \
+    export CC=clang CXX=clang++ AR=llvm-ar RANLIB=llvm-ranlib \
+           HOST=x86_64-unknown-freebsd14 OPENSSL_TARGET=BSD-x86_64 \
+           CFLAGS="--sysroot=/opt/freebsd/amd64 --target=x86_64-unknown-freebsd14" \
+           LDFLAGS="--sysroot=/opt/freebsd/amd64 --target=x86_64-unknown-freebsd14 -fuse-ld=lld" \
+           ZLIB_CMAKE=0 OPENSSL_EXTRA="" \
+           OPENSSL_MAKE_TARGET="" OPENSSL_INSTALL_TARGET=install_sw; \
+    /opt/build-deps.sh freebsd-amd64 \
+    '
+
+# --- freebsd-arm64 ---
+RUN sh -c ' \
+    export CC=clang CXX=clang++ AR=llvm-ar RANLIB=llvm-ranlib \
+           HOST=aarch64-unknown-freebsd14 OPENSSL_TARGET=BSD-generic64 \
+           CFLAGS="--sysroot=/opt/freebsd/arm64 --target=aarch64-unknown-freebsd14" \
+           LDFLAGS="--sysroot=/opt/freebsd/arm64 --target=aarch64-unknown-freebsd14 -fuse-ld=lld" \
+           ZLIB_CMAKE=0 OPENSSL_EXTRA="" \
+           OPENSSL_MAKE_TARGET="" OPENSSL_INSTALL_TARGET=install_sw; \
+    /opt/build-deps.sh freebsd-arm64 \
+    '
+
+# ===========================================================================
+# Per-target environment files
+# Sourced by the workflow: . /opt/tor-build/env/linux-amd64
+# Sets: CC CXX AR RANLIB STRIP HOST DEPS CFLAGS LDFLAGS LIBS
+#       CONFIGURE_FLAGS EXT OSNAME ARCHNAME
+# ===========================================================================
+RUN mkdir -p /opt/tor-build/env
+
+# Common Tor configure flags (appended to per-target flags below)
+# --disable-tool-name-check: zig/clang/osxcross don't respond to Tor's -V/-qversion probe
+
+COPY <<'ENVLINUXAMD64' /opt/tor-build/env/linux-amd64
+export DEPS=/opt/deps/linux-amd64
+export CC=x86_64-linux-musl-gcc
+export CXX=x86_64-linux-musl-g++
+export AR=x86_64-linux-musl-ar
+export RANLIB=x86_64-linux-musl-ranlib
+export STRIP=x86_64-linux-musl-strip
+export HOST=x86_64-linux-musl
+export CFLAGS="-I${DEPS}/include"
+export LDFLAGS="-L${DEPS}/lib -static"
 export LIBS="-lzstd -llzma -lssl -lcrypto -levent -lz"
+export EXT=""
+export OSNAME=linux
+export ARCHNAME=amd64
+export CONFIGURE_FLAGS="--host=${HOST} --enable-static-tor \
+  --with-libevent-dir=${DEPS} --with-openssl-dir=${DEPS} --with-zlib-dir=${DEPS} \
+  --enable-zstd --enable-lzma \
+  --disable-asciidoc --disable-manpage --disable-html-manual \
+  --disable-module-relay --disable-module-dirauth \
+  --disable-systemd --disable-seccomp --disable-libscrypt \
+  --disable-tool-name-check"
+ENVLINUXAMD64
 
-./configure ${HOST} --prefix=/output --enable-static-tor \
-    --with-libevent-dir=${LIBEVENT_DIR} --with-openssl-dir=${OPENSSL_DIR} --with-zlib-dir=${ZLIB_DIR} \
-    --enable-zstd --enable-lzma --disable-asciidoc --disable-manpage --disable-html-manual \
-    --disable-module-relay --disable-module-dirauth --disable-systemd --disable-seccomp \
-    --disable-libscrypt --disable-tool-name-check
+COPY <<'ENVLINUXARM64' /opt/tor-build/env/linux-arm64
+export DEPS=/opt/deps/linux-arm64
+export CC=aarch64-linux-musl-gcc
+export CXX=aarch64-linux-musl-g++
+export AR=aarch64-linux-musl-ar
+export RANLIB=aarch64-linux-musl-ranlib
+export STRIP=aarch64-linux-musl-strip
+export HOST=aarch64-linux-musl
+export CFLAGS="-I${DEPS}/include"
+export LDFLAGS="-L${DEPS}/lib -static"
+export LIBS="-lzstd -llzma -lssl -lcrypto -levent -lz"
+export EXT=""
+export OSNAME=linux
+export ARCHNAME=arm64
+export CONFIGURE_FLAGS="--host=${HOST} --enable-static-tor \
+  --with-libevent-dir=${DEPS} --with-openssl-dir=${DEPS} --with-zlib-dir=${DEPS} \
+  --enable-zstd --enable-lzma \
+  --disable-asciidoc --disable-manpage --disable-html-manual \
+  --disable-module-relay --disable-module-dirauth \
+  --disable-systemd --disable-seccomp --disable-libscrypt \
+  --disable-tool-name-check"
+ENVLINUXARM64
 
-make -j$(nproc)
-${STRIP} src/app/tor
-mkdir -p /output
-cp src/app/tor /output/tor-linux-${ARCH}
-echo "${TOR_VERSION}" > /output/VERSION
-echo "Built: /output/tor-linux-${ARCH}"
-EOF
+COPY <<'ENVWINAMD64' /opt/tor-build/env/windows-amd64
+export DEPS=/opt/deps/windows-amd64
+export CC=x86_64-w64-mingw32-gcc
+export CXX=x86_64-w64-mingw32-g++
+export AR=x86_64-w64-mingw32-ar
+export RANLIB=x86_64-w64-mingw32-ranlib
+export STRIP=x86_64-w64-mingw32-strip
+export HOST=x86_64-w64-mingw32
+export CFLAGS="-I${DEPS}/include"
+export LDFLAGS="-L${DEPS}/lib -static"
+export LIBS="-lzstd -llzma -lssl -lcrypto -levent -lz -lws2_32 -lcrypt32 -lgdi32 -liphlpapi"
+export EXT=".exe"
+export OSNAME=windows
+export ARCHNAME=amd64
+export CONFIGURE_FLAGS="--host=${HOST} --enable-static-tor \
+  --with-libevent-dir=${DEPS} --with-openssl-dir=${DEPS} --with-zlib-dir=${DEPS} \
+  --enable-zstd --enable-lzma \
+  --disable-asciidoc --disable-manpage --disable-html-manual \
+  --disable-module-relay --disable-module-dirauth \
+  --disable-systemd --disable-seccomp --disable-libscrypt \
+  --disable-tool-name-check \
+  --enable-static-libevent --enable-static-openssl --enable-static-zlib"
+ENVWINAMD64
 
-RUN chmod +x /usr/local/bin/build-tor
+COPY <<'ENVWINARM64' /opt/tor-build/env/windows-arm64
+export DEPS=/opt/deps/windows-arm64
+export CC=aarch64-w64-mingw32-clang
+export CXX=aarch64-w64-mingw32-clang++
+export AR=aarch64-w64-mingw32-ar
+export RANLIB=aarch64-w64-mingw32-ranlib
+export STRIP=aarch64-w64-mingw32-strip
+export HOST=aarch64-w64-mingw32
+export CFLAGS="-I${DEPS}/include"
+export LDFLAGS="-L${DEPS}/lib -static"
+export LIBS="-lzstd -llzma -lssl -lcrypto -levent -lz -lws2_32 -lcrypt32 -lgdi32 -liphlpapi"
+export EXT=".exe"
+export OSNAME=windows
+export ARCHNAME=arm64
+export CONFIGURE_FLAGS="--host=${HOST} --enable-static-tor \
+  --with-libevent-dir=${DEPS} --with-openssl-dir=${DEPS} --with-zlib-dir=${DEPS} \
+  --enable-zstd --enable-lzma \
+  --disable-asciidoc --disable-manpage --disable-html-manual \
+  --disable-module-relay --disable-module-dirauth \
+  --disable-systemd --disable-seccomp --disable-libscrypt \
+  --disable-tool-name-check \
+  --enable-static-libevent --enable-static-openssl --enable-static-zlib"
+ENVWINARM64
+
+COPY <<'ENVDARWINAMD64' /opt/tor-build/env/darwin-amd64
+export DEPS=/opt/deps/darwin-amd64
+export CC=x86_64-apple-darwin23-clang
+export CXX=x86_64-apple-darwin23-clang++
+export AR=x86_64-apple-darwin23-ar
+export RANLIB=x86_64-apple-darwin23-ranlib
+export STRIP=x86_64-apple-darwin23-strip
+export HOST=x86_64-apple-darwin23
+export CFLAGS="-I${DEPS}/include"
+export LDFLAGS="-L${DEPS}/lib -static"
+export LIBS="-lzstd -llzma -lssl -lcrypto -levent -lz"
+export EXT=""
+export OSNAME=darwin
+export ARCHNAME=amd64
+export CONFIGURE_FLAGS="--host=${HOST} --enable-static-tor \
+  --with-libevent-dir=${DEPS} --with-openssl-dir=${DEPS} --with-zlib-dir=${DEPS} \
+  --enable-zstd --enable-lzma \
+  --disable-asciidoc --disable-manpage --disable-html-manual \
+  --disable-module-relay --disable-module-dirauth \
+  --disable-systemd --disable-seccomp --disable-libscrypt \
+  --disable-tool-name-check --disable-gcc-hardening"
+ENVDARWINAMD64
+
+COPY <<'ENVDARWINARM64' /opt/tor-build/env/darwin-arm64
+export DEPS=/opt/deps/darwin-arm64
+export CC=aarch64-apple-darwin23-clang
+export CXX=aarch64-apple-darwin23-clang++
+export AR=aarch64-apple-darwin23-ar
+export RANLIB=aarch64-apple-darwin23-ranlib
+export STRIP=aarch64-apple-darwin23-strip
+export HOST=aarch64-apple-darwin23
+export CFLAGS="-I${DEPS}/include"
+export LDFLAGS="-L${DEPS}/lib -static"
+export LIBS="-lzstd -llzma -lssl -lcrypto -levent -lz"
+export EXT=""
+export OSNAME=darwin
+export ARCHNAME=arm64
+export CONFIGURE_FLAGS="--host=${HOST} --enable-static-tor \
+  --with-libevent-dir=${DEPS} --with-openssl-dir=${DEPS} --with-zlib-dir=${DEPS} \
+  --enable-zstd --enable-lzma \
+  --disable-asciidoc --disable-manpage --disable-html-manual \
+  --disable-module-relay --disable-module-dirauth \
+  --disable-systemd --disable-seccomp --disable-libscrypt \
+  --disable-tool-name-check --disable-gcc-hardening"
+ENVDARWINARM64
+
+COPY <<'ENVFBSDAMD64' /opt/tor-build/env/freebsd-amd64
+export DEPS=/opt/deps/freebsd-amd64
+export CC=clang
+export CXX=clang++
+export AR=llvm-ar
+export RANLIB=llvm-ranlib
+export STRIP=llvm-strip
+export HOST=x86_64-unknown-freebsd14
+export CFLAGS="--sysroot=/opt/freebsd/amd64 --target=x86_64-unknown-freebsd14 -I${DEPS}/include"
+export LDFLAGS="--sysroot=/opt/freebsd/amd64 --target=x86_64-unknown-freebsd14 -fuse-ld=lld -L${DEPS}/lib -static"
+export LIBS="-lzstd -llzma -lssl -lcrypto -levent -lz"
+export EXT=""
+export OSNAME=freebsd
+export ARCHNAME=amd64
+export CONFIGURE_FLAGS="--host=${HOST} --enable-static-tor \
+  --with-libevent-dir=${DEPS} --with-openssl-dir=${DEPS} --with-zlib-dir=${DEPS} \
+  --enable-zstd --enable-lzma \
+  --disable-asciidoc --disable-manpage --disable-html-manual \
+  --disable-module-relay --disable-module-dirauth \
+  --disable-systemd --disable-seccomp --disable-libscrypt \
+  --disable-tool-name-check"
+ENVFBSDAMD64
+
+COPY <<'ENVFBSDARM64' /opt/tor-build/env/freebsd-arm64
+export DEPS=/opt/deps/freebsd-arm64
+export CC=clang
+export CXX=clang++
+export AR=llvm-ar
+export RANLIB=llvm-ranlib
+export STRIP=llvm-strip
+export HOST=aarch64-unknown-freebsd14
+export CFLAGS="--sysroot=/opt/freebsd/arm64 --target=aarch64-unknown-freebsd14 -I${DEPS}/include"
+export LDFLAGS="--sysroot=/opt/freebsd/arm64 --target=aarch64-unknown-freebsd14 -fuse-ld=lld -L${DEPS}/lib -static"
+export LIBS="-lzstd -llzma -lssl -lcrypto -levent -lz"
+export EXT=""
+export OSNAME=freebsd
+export ARCHNAME=arm64
+export CONFIGURE_FLAGS="--host=${HOST} --enable-static-tor \
+  --with-libevent-dir=${DEPS} --with-openssl-dir=${DEPS} --with-zlib-dir=${DEPS} \
+  --enable-zstd --enable-lzma \
+  --disable-asciidoc --disable-manpage --disable-html-manual \
+  --disable-module-relay --disable-module-dirauth \
+  --disable-systemd --disable-seccomp --disable-libscrypt \
+  --disable-tool-name-check"
+ENVFBSDARM64
+
+# ---------------------------------------------------------------------------
+# Clean up dep sources (keep only the built libraries)
+# ---------------------------------------------------------------------------
+RUN rm -rf /opt/src
+
 WORKDIR /workspace
-CMD ["echo", "Usage: build-tor [amd64|arm64] [version]"]
+CMD ["echo", "Usage: . /opt/tor-build/env/<os>-<arch> then build Tor"]
