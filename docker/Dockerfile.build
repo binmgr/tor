@@ -152,8 +152,8 @@ if [ "${ZLIB_CMAKE}" = "1" ]; then
         -DBUILD_SHARED_LIBS=OFF
     cmake --build "_zbuild" -j"${NPROC}"
     cmake --install "_zbuild"
-    # cmake names the static lib libzlib.a; linker expects libz.a
-    ln -sf libzlib.a "${DEPS}/lib/libz.a"
+    # cmake names the static lib libzs.a; linker expects libz.a
+    ln -sf libzs.a "${DEPS}/lib/libz.a"
 else
     cd "zlib-${ZLIB_VERSION}"
     CHOST="${HOST}" CC="${CC}" AR="${AR}" RANLIB="${RANLIB}" CFLAGS="${CFLAGS}" \
@@ -437,7 +437,7 @@ export LIBS="-lzstd -llzma -lssl -lcrypto -levent -lz"
 export EXT=""
 export OSNAME=darwin
 export ARCHNAME=amd64
-export CONFIGURE_FLAGS="--host=${HOST} --enable-static-tor \
+export CONFIGURE_FLAGS="--host=${HOST} \
   --with-libevent-dir=${DEPS} --with-openssl-dir=${DEPS} --with-zlib-dir=${DEPS} \
   --enable-zstd --enable-lzma \
   --disable-asciidoc --disable-manpage --disable-html-manual \
@@ -460,7 +460,7 @@ export LIBS="-lzstd -llzma -lssl -lcrypto -levent -lz"
 export EXT=""
 export OSNAME=darwin
 export ARCHNAME=arm64
-export CONFIGURE_FLAGS="--host=${HOST} --enable-static-tor \
+export CONFIGURE_FLAGS="--host=${HOST} \
   --with-libevent-dir=${DEPS} --with-openssl-dir=${DEPS} --with-zlib-dir=${DEPS} \
   --enable-zstd --enable-lzma \
   --disable-asciidoc --disable-manpage --disable-html-manual \
