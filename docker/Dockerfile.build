@@ -12,7 +12,7 @@ ENV DEBIAN_FRONTEND=noninteractive
 # ---------------------------------------------------------------------------
 ENV ZIG_VERSION=0.14.0 \
     LLVM_MINGW_VERSION=20241217 \
-    FREEBSD_VERSION=14.3-RELEASE \
+    FREEBSD_VERSION=14.5-RELEASE \
     OPENSSL_VERSION=3.2.1 \
     LIBEVENT_VERSION=2.1.12-stable \
     ZLIB_VERSION=1.3.2 \
@@ -103,7 +103,7 @@ ENV PATH="/opt/cross/bin:/opt/zig:/opt/llvm-mingw/bin:/opt/osxcross/target/bin:$
 # Download dep sources (reused for all 8 targets)
 # ---------------------------------------------------------------------------
 RUN mkdir -p /opt/src && cd /opt/src && \
-    wget -q "https://zlib.net/zlib-${ZLIB_VERSION}.tar.gz" && \
+    wget -q "https://github.com/madler/zlib/releases/download/v${ZLIB_VERSION}/zlib-${ZLIB_VERSION}.tar.gz" && \
     wget -q "https://www.openssl.org/source/openssl-${OPENSSL_VERSION}.tar.gz" && \
     wget -q "https://github.com/libevent/libevent/releases/download/release-${LIBEVENT_VERSION}/libevent-${LIBEVENT_VERSION}.tar.gz" && \
     wget -q "https://github.com/facebook/zstd/releases/download/v${ZSTD_VERSION}/zstd-${ZSTD_VERSION}.tar.gz" && \
@@ -516,9 +516,46 @@ export CONFIGURE_FLAGS="--host=${HOST} --enable-static-tor \
 ENVFBSDARM64
 
 # ---------------------------------------------------------------------------
+# build-tor <os>-<arch> <tor-version> <output-dir>
+# Downloads the upstream tarball, configures against the target's static deps,
+# builds, strips, and writes tor-<os>-<arch>[.exe] into <output-dir>.
+# ---------------------------------------------------------------------------
+COPY <<'BUILDTOR' /usr/local/bin/build-tor
+#!/bin/sh
+set -eu
+
+TARGET="${1:?usage: build-tor <os>-<arch> <version> <output-dir>}"
+VERSION="${2:?usage: build-tor <os>-<arch> <version> <output-dir>}"
+OUTDIR="${3:?usage: build-tor <os>-<arch> <version> <output-dir>}"
+
+. "/opt/tor-build/env/${TARGET}"
+
+BUILD_DIR="$(mktemp -d /tmp/torbuild-XXXXXX)"
+trap 'rm -rf "${BUILD_DIR}"' EXIT
+cd "${BUILD_DIR}"
+
+wget -q "https://dist.torproject.org/tor-${VERSION}.tar.gz"
+tar xzf "tor-${VERSION}.tar.gz"
+cd "tor-${VERSION}"
+
+# shellcheck disable=SC2086
+./configure ${CONFIGURE_FLAGS} --prefix="${BUILD_DIR}/output" || { cat config.log; exit 1; }
+make -j"$(nproc)"
+make install
+
+"${STRIP}" "${BUILD_DIR}/output/bin/tor${EXT}" 2>/dev/null || \
+    strip "${BUILD_DIR}/output/bin/tor${EXT}" 2>/dev/null || true
+
+mkdir -p "${OUTDIR}"
+cp "${BUILD_DIR}/output/bin/tor${EXT}" "${OUTDIR}/tor-${OSNAME}-${ARCHNAME}${EXT}"
+BUILDTOR
+
+RUN chmod +x /usr/local/bin/build-tor
+
+# ---------------------------------------------------------------------------
 # Clean up dep sources (keep only the built libraries)
 # ---------------------------------------------------------------------------
 RUN rm -rf /opt/src
 
 WORKDIR /workspace
-CMD ["echo", "Usage: . /opt/tor-build/env/<os>-<arch> then build Tor"]
+CMD ["echo", "Usage: build-tor <os>-<arch> <tor-version> <output-dir>"]

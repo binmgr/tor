@@ -4,14 +4,18 @@ on:
   push:
     branches: [main, master]
     paths:
-      - 'Dockerfile'
+      - 'docker/Dockerfile'
       - '.github/workflows/build-binaries.yml'
+  workflow_run:
+    workflows: ['Build Environment Image']
+    types: [completed]
+    branches: [main, master]
   schedule:
     - cron: '0 0 1 * *'
   workflow_dispatch:
     inputs:
       tor_version:
-        description: 'Tor version (empty for latest)'
+        description: 'tor version (empty for latest)'
         required: false
         default: ''
 
@@ -22,20 +26,23 @@ env:
 jobs:
   get-version:
     runs-on: ubuntu-latest
+    if: github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success'
     outputs:
       version: ${{ steps.version.outputs.version }}
       tag: ${{ steps.version.outputs.tag }}
     steps:
-      - name: Get Tor Version
+      - name: Get Tor version
         id: version
+        env:
+          INPUT_VERSION: ${{ inputs.tor_version }}
         run: |
-          if [ -n "${{ inputs.tor_version }}" ]; then
-            VERSION="${{ inputs.tor_version }}"
+          if [ -n "${INPUT_VERSION}" ]; then
+            VERSION="${INPUT_VERSION}"
           else
-            VERSION=$(curl -s https://dist.torproject.org/ | grep -oP 'tor-\K[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+' | sort -V | tail -1)
+            VERSION=$(curl -fsSL https://dist.torproject.org/ | grep -oE 'tor-[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+\.tar\.gz' | sed -e 's/^tor-//' -e 's/\.tar\.gz$//' | sort -uV | tail -1)
           fi
-          echo "version=${VERSION}" >> $GITHUB_OUTPUT
-          echo "tag=v${VERSION}" >> $GITHUB_OUTPUT
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+          echo "tag=v${VERSION}" >> "$GITHUB_OUTPUT"
           echo "Tor version: ${VERSION}"
 
   build:
@@ -59,53 +66,17 @@ jobs:
           - { os: freebsd, arch: amd64, ext: "" }
           - { os: freebsd, arch: arm64, ext: "" }
     steps:
-      - name: Build Tor
+      - name: Build tor
         env:
           TOR_VERSION: ${{ needs.get-version.outputs.version }}
         run: |
-          . /opt/tor-build/env/${{ matrix.os }}-${{ matrix.arch }}
-
-          BUILD_DIR="$(mktemp -d /tmp/torbuild-XXXXXX)"
-          cd "${BUILD_DIR}"
-
-          wget -q "https://dist.torproject.org/tor-${TOR_VERSION}.tar.gz"
-          tar xzf "tor-${TOR_VERSION}.tar.gz"
-          cd "tor-${TOR_VERSION}"
-
-          # shellcheck disable=SC2086
-          ./configure ${CONFIGURE_FLAGS} --prefix="${BUILD_DIR}/output" || { cat config.log; exit 1; }
-          make -j$(nproc)
-          make install
-
-          "${STRIP}" "${BUILD_DIR}/output/bin/tor${EXT}" 2>/dev/null || \
-            strip "${BUILD_DIR}/output/bin/tor${EXT}" 2>/dev/null || true
-
-          ARTIFACT="tor-${OSNAME}-${ARCHNAME}${EXT}"
-          cp "${BUILD_DIR}/output/bin/tor${EXT}" "${GITHUB_WORKSPACE}/${ARTIFACT}"
-
-          cat > "${GITHUB_WORKSPACE}/tor-${OSNAME}-${ARCHNAME}.json" << EOF
-          {
-            "org.opencontainers.image.title": "Tor Static Build",
-            "org.opencontainers.image.version": "${TOR_VERSION}",
-            "org.opencontainers.image.os": "${OSNAME}",
-            "org.opencontainers.image.architecture": "${ARCHNAME}",
-            "org.opencontainers.image.created": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
-            "org.opencontainers.image.source": "https://github.com/${{ github.repository }}",
-            "org.opencontainers.image.revision": "${{ github.sha }}",
-            "org.opencontainers.image.vendor": "${{ github.repository_owner }}",
-            "org.opencontainers.image.licenses": "BSD-3-Clause",
-            "build.static": "true",
-            "build.stripped": "true"
-          }
-          EOF
+          build-tor "${{ matrix.os }}-${{ matrix.arch }}" "${TOR_VERSION}" "${GITHUB_WORKSPACE}/out"
 
       - name: Upload Artifact
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4
         with:
           name: tor-${{ matrix.os }}-${{ matrix.arch }}
-          path: |
-            tor-${{ matrix.os }}-${{ matrix.arch }}${{ matrix.ext }}
-            tor-${{ matrix.os }}-${{ matrix.arch }}.json
+          path: out/tor-${{ matrix.os }}-${{ matrix.arch }}${{ matrix.ext }}
           retention-days: 1
 
   release:
@@ -124,23 +95,15 @@ jobs:
 
       - name: Get YYMM tag
         id: yymm
-        run: echo "tag=$(date -u +'%y%m')" >> $GITHUB_OUTPUT
+        run: echo "tag=$(date -u +'%y%m')" >> "$GITHUB_OUTPUT"
 
       - name: Prepare release
         run: |
           mkdir -p release
-          mv artifacts/* release/ 2>/dev/null || mv artifacts/*/* release/
+          mv artifacts/* release/
           cd release
-          chmod +x tor-linux-* tor-darwin-* tor-freebsd-* 2>/dev/null || true
+          chmod +x tor-linux-* tor-darwin-* tor-freebsd-*
           sha256sum tor-* > checksums.txt
-          echo "[" > metadata.json
-          first=true
-          for f in *.json; do
-            [ "$f" = "metadata.json" ] && continue
-            [ "$first" = true ] && first=false || echo "," >> metadata.json
-            cat "$f" >> metadata.json
-          done
-          echo "]" >> metadata.json
 
       - name: Create release
         env:
@@ -171,7 +134,7 @@ jobs:
         uses: docker/build-push-action@ca052bb54ab0790a636c9b5f226502c73d547a25  # v5
         with:
           context: .
-          file: Dockerfile
+          file: docker/Dockerfile
           platforms: linux/amd64,linux/arm64
           push: true
           tags: |

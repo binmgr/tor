@@ -89,16 +89,34 @@ sha256sum -c checksums.txt
 
 | Platform | Toolchain |
 |----------|-----------|
-| Linux | musl-cross (musl libc, fully static) |
+| Linux | zig cc (musl libc, fully static) |
 | Windows | mingw-w64 (amd64), llvm-mingw (arm64) |
 | macOS | osxcross with MacOSX 14.0 SDK |
-| FreeBSD | clang + lld with FreeBSD 14.1 sysroot |
+| FreeBSD | clang + lld with FreeBSD 14.5 sysroot |
+
+## Docker
+
+```bash
+docker run --rm ghcr.io/binmgr/tor:latest --version
+```
+
+The image is `FROM scratch` with only the static `tor` binary (linux/amd64, linux/arm64).
+
+## Build Locally
+
+```bash
+make build-env
+make build TARGET=linux-amd64 VERSION=0.4.9.16
+```
+
+Output lands in `binaries/`. Targets: `{linux,windows,darwin,freebsd}-{amd64,arm64}`.
 
 ## Build Schedule
 
 | Trigger | Description |
 |---------|-------------|
-| **Push** | Builds on every push to main/master that touches workflow or Dockerfile |
+| **Push** | Builds on pushes to main/master that touch `docker/` or the build workflow |
+| **Build image update** | Rebuilds binaries after the build environment image is rebuilt |
 | **Monthly** | Scheduled build on the 1st of each month |
 | **Manual** | Triggered via workflow dispatch with optional version override |
 
@@ -172,7 +190,10 @@ ssh -o ProxyCommand="nc -X 5 -x 127.0.0.1:9050 %h %p" user@host
 | Platform | Workflow Files | Notes |
 |----------|----------------|-------|
 | **GitHub Actions** | `.github/workflows/` | Releases to GitHub Releases + ghcr.io |
-| **Gitea Actions** | `.gitea/workflows/` | Releases via Gitea API |
+| **Gitea Actions** | `.gitea/workflows/` | Releases via Gitea API; pulls the build image or builds it locally |
+| **Forgejo Actions** | `.forgejo/workflows/` | Same as Gitea |
+| **GitLab CI** | `.gitlab-ci.yml` | Releases via GitLab API (docker-in-docker) |
+| **Jenkins** | `Jenkinsfile` | Verification build only; no release |
 
 ### Running Locally with act
 
@@ -189,18 +210,24 @@ act -j build push
 ```
 .
 ├── .github/
-│   └── workflows/
-│       ├── build-env-image.yml   # Build + push ghcr.io/binmgr/tor:build
-│       └── build-binaries.yml    # Build all 8 binaries + create release
-├── .gitea/
-│   └── workflows/
-│       ├── build-env-image.yml   # Build + push ghcr.io/binmgr/tor:build
-│       └── build-binaries.yml    # Build all 8 binaries + create release
+│   ├── workflows/
+│   │   ├── build-env-image.yml   # Build + push ghcr.io/binmgr/tor:build
+│   │   ├── build-binaries.yml    # Build all 8 binaries + release + runtime image
+│   │   └── security.yml          # Secret scan, action pinning policy, image scan
+│   ├── CODEOWNERS, SECURITY.md, pull_request_template.md, ISSUE_TEMPLATE/
+├── .gitea/workflows/             # Gitea mirror
+├── .forgejo/workflows/           # Forgejo mirror
+├── .gitlab-ci.yml                # GitLab CI mirror
+├── Jenkinsfile                   # Jenkins verification pipeline
 ├── docker/
-│   └── Dockerfile.build          # Build environment (Alpine + cross-compilers)
-├── Dockerfile                    # Minimal runtime image (FROM scratch)
-├── LICENSE.md                    # License information
-└── README.md                     # This file
+│   ├── Dockerfile.build          # Build environment (Ubuntu 22.04 + zig, mingw, osxcross, FreeBSD sysroots)
+│   └── Dockerfile                # Minimal runtime image (FROM scratch)
+├── AI.md                         # Implementation spec
+├── IDEA.md                       # Project plan
+├── SPEC.md                       # Project-specific rule overrides
+├── Makefile                      # build-env, build, validate, test, clean
+├── LICENSE.md
+└── README.md
 ```
 
 ## Contributing
